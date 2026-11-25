@@ -1,0 +1,24 @@
+{
+  "name": "auth-app",
+  "private": true,
+  "description": "Full-stack sign up / sign in module: NestJS + MongoDB API, React + TypeScript web app",
+  "type": "module",
+  "packageManager": "pnpm@12.23.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "build:shared": "pnpm --filter @auth-app/shared build",
+    "dev": "pnpm build:shared && pnpm --parallel --filter @auth-app/api --filter @auth-app/web dev",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm build:shared && pnpm -r typecheck",
+    "test": "pnpm build:shared && pnpm -r test",
+    "test:e2e": "pnpm --filter @auth-app/e2e test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2"
+  }
+}
