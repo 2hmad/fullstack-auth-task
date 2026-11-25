@@ -1,10 +1,12 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
-import { PasswordHasher, TokenService } from '@nestjs/authentication';
 import { Test } from '@nestjs/testing';
 import { vi } from 'vitest';
 import { EmailAlreadyRegisteredError, type User } from '../users/user.model.js';
 import { UsersRepository } from '../users/users.repository.js';
 import { AuthService } from './auth.service.js';
+import { PasswordHasher } from './password-hasher.js';
+import { TokenService } from './token.service.js';
+import { RefreshTokenRotator } from './refresh-tokens/refresh-token-rotator.js';
 
 describe('AuthService', () => {
   const ada: User = {
@@ -20,7 +22,8 @@ describe('AuthService', () => {
     findCredentialsByEmail: vi.fn(),
     updatePasswordHash: vi.fn(),
   };
-  const tokens = { issue: vi.fn(), refresh: vi.fn(), revoke: vi.fn() };
+  const tokens = { issue: vi.fn(), revoke: vi.fn() };
+  const rotator = { rotate: vi.fn() };
   // The real hasher at a low cost: fast, and proves hashes are never stored in plain text.
   const hasher = new PasswordHasher({ logN: 11 });
   let auth: AuthService;
@@ -33,6 +36,7 @@ describe('AuthService', () => {
         AuthService,
         { provide: UsersRepository, useValue: users },
         { provide: TokenService, useValue: tokens },
+        { provide: RefreshTokenRotator, useValue: rotator },
         { provide: PasswordHasher, useValue: hasher },
       ],
     }).compile();
@@ -54,7 +58,7 @@ describe('AuthService', () => {
     it('signs the new user in', async () => {
       users.create.mockResolvedValue(ada);
       expect(await auth.signUp(input)).toEqual({ tokens: pair, user: ada });
-      expect(tokens.issue).toHaveBeenCalledWith(ada.id, { method: 'password' });
+      expect(tokens.issue).toHaveBeenCalledWith(ada.id);
     });
 
     it('answers 409 when the email is taken', async () => {
@@ -121,14 +125,14 @@ describe('AuthService', () => {
 
   describe('refresh', () => {
     it('rotates the refresh token', async () => {
-      tokens.refresh.mockResolvedValue(pair);
+      rotator.rotate.mockResolvedValue(pair);
       expect(await auth.refresh('old')).toEqual(pair);
-      expect(tokens.refresh).toHaveBeenCalledWith('old');
+      expect(rotator.rotate).toHaveBeenCalledWith('old');
     });
 
     it('answers 401 when there is no refresh token', async () => {
       await expect(auth.refresh(undefined)).rejects.toBeInstanceOf(UnauthorizedException);
-      expect(tokens.refresh).not.toHaveBeenCalled();
+      expect(rotator.rotate).not.toHaveBeenCalled();
     });
   });
 

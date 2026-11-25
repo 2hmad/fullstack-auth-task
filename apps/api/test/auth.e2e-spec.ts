@@ -1,8 +1,12 @@
+import { randomUUID } from 'node:crypto';
+import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
+import { getConnectionToken } from '@nestjs/mongoose';
+import type { Connection } from 'mongoose';
 import type { INestApplication } from '@nestjs/common';
 import { apiErrorSchema, authSessionSchema, userProfileSchema } from '@auth-app/shared';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
-import { closeTestApp, cookieValue, createTestApp } from './utils/app.js';
+import { closeTestApp, cookieValue, createTestApp, TEST_JWT_SECRET } from './utils/app.js';
 
 const REFRESH_COOKIE = 'refresh_token';
 
@@ -25,6 +29,27 @@ describe('Authentication (e2e)', () => {
     const req = http().post('/api/v1/auth/refresh');
     return cookie ? req.set('Cookie', cookie) : req;
   };
+
+  const me = (accessToken: string) =>
+    http().get('/api/v1/users/me').set('Authorization', `Bearer ${accessToken}`);
+  const sign = (claims: Record<string, unknown>, options: JwtSignOptions = {}) =>
+    new JwtService().sign(
+      claims,
+      // An option set to undefined is left out, to sign a token without that claim.
+      Object.fromEntries(
+        Object.entries({
+          secret: TEST_JWT_SECRET,
+          issuer: 'auth-app-api',
+          audience: 'auth-app-web',
+          ...(claims.exp === undefined && { expiresIn: 15 * 60 }),
+          ...options,
+        }).filter(([, value]) => value !== undefined),
+      ),
+    );
+  const refreshCookie = (res: request.Response) =>
+    cookieValue(res.headers['set-cookie'], REFRESH_COOKIE)!;
+  const signInCookie = async () =>
+    refreshCookie(await signIn({ email: ada.email, password: ada.password }).expect(200));
 
   describe('POST /api/v1/auth/signup', () => {
     it('creates the account, signs it in and sets the refresh cookie', async () => {
@@ -109,6 +134,68 @@ describe('Authentication (e2e)', () => {
       expect(apiErrorSchema.parse(res.body).statusCode).toBe(401);
     });
 
+    it('answers 401 for a correctly signed token that belongs to no session', async () => {
+      const user = await signIn({ email: ada.email, password: ada.password }).expect(200);
+      await me(sign({ sub: user.body.user.id })).expect(401);
+    });
+
+    it.each([
+      ['another secret', { secret: 'another-secret-that-is-at-least-32-bytes' }],
+      ['another algorithm', { algorithm: 'HS512' as const }],
+      ['another issuer', { issuer: 'someone-else' }],
+      ['another audience', { audience: 'another-app' }],
+      ['no audience', { audience: undefined }],
+      ['no issuer', { issuer: undefined }],
+    ])('answers 401 for a token signed with %s', async (_case, options) => {
+      const user = await signIn({ email: ada.email, password: ada.password }).expect(200);
+      const claims = { sub: user.body.user.id, sid: randomUUID() };
+      // The same claims are fine in a token of ours: only the option under test is wrong.
+      await me(sign(claims)).expect(200);
+      await me(sign(claims, options)).expect(401);
+    });
+
+    it('answers 401 for an expired token', async () => {
+      const user = await signIn({ email: ada.email, password: ada.password }).expect(200);
+      const claims = { sub: user.body.user.id, sid: randomUUID() };
+      await me(sign({ ...claims, exp: Math.floor(Date.now() / 1000) - 60 })).expect(401);
+    });
+
+    it('answers 401 once the account is deleted', async () => {
+      const grace = { email: 'grace@example.com', name: 'Grace Hopper', password: 'Compiler1!' };
+      const { body } = await signUp(grace).expect(201);
+      await me(body.accessToken).expect(200);
+      const connection = app.get<Connection>(getConnectionToken());
+      const { deletedCount } = await connection
+        .collection('users')
+        .deleteOne({ email: grace.email });
+      expect(deletedCount).toBe(1);
+      await me(body.accessToken).expect(401);
+    });
+
+    it('answers 401 for an unsigned token (alg none)', async () => {
+      const user = await signIn({ email: ada.email, password: ada.password }).expect(200);
+      const part = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
+      const now = Math.floor(Date.now() / 1000);
+      const payload = {
+        sub: user.body.user.id,
+        sid: randomUUID(),
+        iss: 'auth-app-api',
+        aud: 'auth-app-web',
+        iat: now,
+        exp: now + 900,
+      };
+      await me(`${part({ alg: 'none', typ: 'JWT' })}.${part(payload)}.`).expect(401);
+    });
+
+    it('answers 401 for a malformed Authorization header', async () => {
+      const { body } = await signIn({ email: ada.email, password: ada.password }).expect(200);
+      await http().get('/api/v1/users/me').set('Authorization', body.accessToken).expect(401);
+      await http()
+        .get('/api/v1/users/me')
+        .set('Authorization', `Basic ${body.accessToken}`)
+        .expect(401);
+    });
+
     it('answers 401 with a forged token', async () => {
       await http().get('/api/v1/users/me').set('Authorization', 'Bearer not.a.jwt').expect(401);
     });
@@ -139,17 +226,29 @@ describe('Authentication (e2e)', () => {
         .expect(200);
     });
 
-    it('treats a reused refresh token as theft and revokes the whole session', async () => {
-      const signedIn = await signIn({ email: ada.email, password: ada.password }).expect(200);
-      const stolen = cookieValue(signedIn.headers['set-cookie'], REFRESH_COOKIE)!;
-      const legit = cookieValue(
-        (await refresh(stolen).expect(200)).headers['set-cookie'],
-        REFRESH_COOKIE,
-      )!;
+    it('answers a retry with the same tokens, so a lost response does not end the session', async () => {
+      const first = await signInCookie();
+      const answer = await refresh(first).expect(200); // imagine this never reached the browser
+      const retry = await refresh(first).expect(200);
 
-      await refresh(stolen).expect(401);
-      // The legitimate holder's newer token died with the family.
-      await refresh(legit).expect(401);
+      expect(refreshCookie(retry)).toBe(refreshCookie(answer));
+      await refresh(refreshCookie(retry)).expect(200);
+    });
+
+    it('treats a reused refresh token as theft and revokes the whole session', async () => {
+      const stolen = await signInCookie();
+      const second = refreshCookie(await refresh(stolen).expect(200));
+      const answer = await refresh(second).expect(200);
+      const newest = refreshCookie(answer);
+
+      // Its successor has been used, so this cannot be a retry.
+      const reuse = await refresh(stolen).expect(401);
+      expect(reuse.headers['set-cookie']?.[0]).toMatch(/refresh_token=;/);
+
+      // Everything the session still holds died with it: refresh tokens and access tokens.
+      await refresh(second).expect(401);
+      await refresh(newest).expect(401);
+      await me(answer.body.accessToken).expect(401);
     });
 
     it('answers 401 without a cookie', async () => {
@@ -168,6 +267,27 @@ describe('Authentication (e2e)', () => {
       await refresh(cookie).expect(401);
     });
 
+    it('ends the access token too, without touching the other sessions of the account', async () => {
+      const [here, elsewhere] = [
+        await signIn({ email: ada.email, password: ada.password }).expect(200),
+        await signIn({ email: ada.email, password: ada.password }).expect(200),
+      ];
+      await http().post('/api/v1/auth/logout').set('Cookie', refreshCookie(here)).expect(204);
+
+      await me(here.body.accessToken).expect(401);
+      await me(elsewhere.body.accessToken).expect(200);
+    });
+
+    it('ends a session whose last refresh response was lost', async () => {
+      const spent = await signInCookie();
+      const unseen = await refresh(spent).expect(200);
+      await http().post('/api/v1/auth/logout').set('Cookie', spent).expect(204);
+
+      await refresh(spent).expect(401);
+      await refresh(refreshCookie(unseen)).expect(401);
+      await me(unseen.body.accessToken).expect(401);
+    });
+
     it('succeeds without a session, so logging out twice is harmless', async () => {
       await http().post('/api/v1/auth/logout').expect(204);
     });
@@ -181,6 +301,15 @@ describe('Authentication (e2e)', () => {
         .set('Origin', 'https://evil.example')
         .send({ email: ada.email, password: ada.password })
         .expect(403);
+    });
+
+    it('allows credentialed cross-origin reads from the web app only', async () => {
+      const allowed = (origin: string) => http().get('/api/v1/users/me').set('Origin', origin);
+      const ours = await allowed('http://localhost:5173');
+      expect(ours.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+      const other = await allowed('https://evil.example');
+      expect(other.headers['access-control-allow-origin']).not.toBe('https://evil.example');
+      expect(other.headers['access-control-allow-origin']).not.toBe('*');
     });
 
     it('propagates a caller-provided request id into the response and error body', async () => {

@@ -1,11 +1,17 @@
 import type { UserProfile } from '@auth-app/shared';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { authApi } from '@/lib/api/auth-api';
 import { onSessionExpired } from '@/lib/api/http';
 import { SessionContext, type SessionContextValue, type SessionStatus } from './use-session';
 
 const SESSION_QUERY_KEY = ['session'] as const;
+
+function sessionStatus({ isPending, isError, data }: UseQueryResult): SessionStatus {
+  if (isPending) return 'loading';
+  if (isError) return 'unavailable';
+  return data ? 'authenticated' : 'anonymous';
+}
 
 /**
  * The signed-in user, kept in the TanStack Query cache under ['session'].
@@ -40,24 +46,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  const status: SessionStatus = session.isPending
-    ? 'loading'
-    : session.data
-      ? 'authenticated'
-      : 'anonymous';
+  const status = sessionStatus(session);
+  const { data, isFetching, refetch } = session;
 
   const value = useMemo<SessionContextValue>(
     () => ({
       status,
-      user: session.data ?? null,
+      user: data ?? null,
       signIn: signIn.mutateAsync,
       signUp: signUp.mutateAsync,
       signOut: signOut.mutateAsync,
       isSigningOut: signOut.isPending,
+      retry: () => void refetch(),
+      isRetrying: isFetching,
     }),
     [
       status,
-      session.data,
+      data,
+      refetch,
+      isFetching,
       signIn.mutateAsync,
       signUp.mutateAsync,
       signOut.mutateAsync,

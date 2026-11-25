@@ -11,6 +11,7 @@
     "build": "pnpm -r build",
     "build:shared": "pnpm --filter @auth-app/shared build",
     "dev": "pnpm build:shared && pnpm --parallel --filter @auth-app/api --filter @auth-app/web dev",
+    "dev:db": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --wait mongo",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm build:shared && pnpm -r typecheck",
     "test": "pnpm build:shared && pnpm -r --filter '!@auth-app/e2e' test",

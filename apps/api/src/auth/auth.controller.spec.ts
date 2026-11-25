@@ -1,8 +1,8 @@
 import { ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
-import { RefreshTokenError } from '@nestjs/authentication';
 import type { Request, Response } from 'express';
 import { vi } from 'vitest';
 import { AuthController } from './auth.controller.js';
+import { RefreshTokenError } from './token.service.js';
 import type { AuthService } from './auth.service.js';
 
 describe('AuthController.refresh', () => {

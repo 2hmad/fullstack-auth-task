@@ -1,8 +1,7 @@
-import type { AuthenticationStorage } from '@nestjs/authentication';
-import { authenticationStoreContract } from '@nestjs/authentication/testing';
+import { randomUUID } from 'node:crypto';
 import mongoose, { type Connection, type Model } from 'mongoose';
 import { isolatedMongoUri } from '../../../test/utils/mongo.js';
-import { MongoRefreshTokenStore } from './mongo-refresh-token.store.js';
+import { MongoRefreshTokenStore, type RefreshTokenRecord } from './mongo-refresh-token.store.js';
 import {
   RefreshTokenEntity,
   RefreshTokenSchema,
@@ -10,34 +9,35 @@ import {
   RevokedRefreshTokenFamilySchema,
 } from './refresh-token.schema.js';
 
-/**
- * Runs the official @nestjs/authentication store contract against our MongoDB store,
- * including the concurrency cases (two refreshes of one token: exactly one may win).
- */
 describe('MongoRefreshTokenStore', () => {
   let connection: Connection;
-  const registered: unknown[] = [];
-  const storage = { registerSource: (sources: unknown) => registered.push(sources) };
+  let store: MongoRefreshTokenStore;
 
-  const createStore = () =>
-    new MongoRefreshTokenStore(
-      connection.model(
-        RefreshTokenEntity.name,
-        RefreshTokenSchema,
-      ) as unknown as Model<RefreshTokenEntity>,
-      connection.model(
-        RevokedRefreshTokenFamilyEntity.name,
-        RevokedRefreshTokenFamilySchema,
-      ) as unknown as Model<RevokedRefreshTokenFamilyEntity>,
-      { absoluteTtlSeconds: 30 * 24 * 60 * 60 },
-      storage as unknown as AuthenticationStorage,
-    );
+  const record = (overrides: Partial<RefreshTokenRecord> = {}): RefreshTokenRecord => ({
+    id: randomUUID(),
+    familyId: randomUUID(),
+    userId: randomUUID(),
+    createdAt: new Date(),
+    expiresAt: new Date(Date.now() + 60_000),
+    familyExpiresAt: new Date(Date.now() + 120_000),
+    ...overrides,
+  });
 
   beforeAll(async () => {
     connection = await mongoose
       .createConnection(isolatedMongoUri(), { maxPoolSize: 10 })
       .asPromise();
-    await Promise.all(Object.values(connection.models).map((model) => model.init()));
+    const tokens = connection.model(RefreshTokenEntity.name, RefreshTokenSchema);
+    const revoked = connection.model(
+      RevokedRefreshTokenFamilyEntity.name,
+      RevokedRefreshTokenFamilySchema,
+    );
+    await Promise.all([tokens.init(), revoked.init()]);
+    store = new MongoRefreshTokenStore(
+      tokens as unknown as Model<RefreshTokenEntity>,
+      revoked as unknown as Model<RevokedRefreshTokenFamilyEntity>,
+      { absoluteTtlSeconds: 30 * 24 * 60 * 60 },
+    );
   });
 
   afterAll(async () => {
@@ -45,17 +45,70 @@ describe('MongoRefreshTokenStore', () => {
     await connection.close();
   });
 
-  it('registers itself as the refresh-token source', () => {
-    createStore();
-    expect(registered.at(-1)).toEqual({ refreshTokens: expect.any(MongoRefreshTokenStore) });
+  it('returns what was saved, without fields that were never set', async () => {
+    const saved = record();
+    await store.saveRefreshToken(saved);
+    const found = await store.getRefreshToken(saved.id);
+    expect(found).toEqual(saved);
+    expect(found).not.toHaveProperty('usedAt');
   });
 
-  const cases = authenticationStoreContract(() => ({ refreshTokens: createStore() }), {
-    contracts: ['refreshTokens'],
-    concurrent: true,
+  it('answers undefined for an unknown token', async () => {
+    expect(await store.getRefreshToken(randomUUID())).toBeUndefined();
   });
 
-  it.each(cases.map((c) => [c.name, c] as const))('%s', async (_name, contractCase) => {
-    await contractCase.run();
+  it('refuses a second token with the same id', async () => {
+    const saved = record();
+    await store.saveRefreshToken(saved);
+    await expect(store.saveRefreshToken({ ...saved })).rejects.toThrow();
+  });
+
+  it('marks a token used once, and records when', async () => {
+    const saved = record();
+    await store.saveRefreshToken(saved);
+    const at = new Date('2026-06-01T00:00:00Z');
+    expect(await store.markRefreshTokenUsed(saved.id, at)).toBe(true);
+    expect(await store.markRefreshTokenUsed(saved.id, new Date())).toBe(false);
+    expect((await store.getRefreshToken(saved.id))?.usedAt).toEqual(at);
+  });
+
+  it('lets exactly one of many concurrent calls spend a token', async () => {
+    const saved = record();
+    await store.saveRefreshToken(saved);
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => store.markRefreshTokenUsed(saved.id, new Date())),
+    );
+    expect(results.filter(Boolean)).toHaveLength(1);
+  });
+
+  it('does not mark an unknown token', async () => {
+    expect(await store.markRefreshTokenUsed(randomUUID(), new Date())).toBe(false);
+  });
+
+  it('revokes one family, idempotently, including tokens saved after the revocation', async () => {
+    const [revoked, other] = [record(), record()];
+    await store.saveRefreshToken(revoked);
+    await store.saveRefreshToken(other);
+    expect(await store.isRefreshTokenFamilyRevoked(revoked.familyId)).toBe(false);
+
+    await store.revokeRefreshTokenFamily(revoked.familyId);
+    await store.revokeRefreshTokenFamily(revoked.familyId);
+    await store.saveRefreshToken(record({ familyId: revoked.familyId }));
+
+    expect(await store.isRefreshTokenFamilyRevoked(revoked.familyId)).toBe(true);
+    expect(await store.isRefreshTokenFamilyRevoked(other.familyId)).toBe(false);
+  });
+
+  it('lets MongoDB delete expired families and old revocations', async () => {
+    const ttl = async (name: string) =>
+      (await connection.collection(name).indexes()).filter(
+        (index) => index.expireAfterSeconds === 0,
+      );
+    expect(await ttl('refresh_tokens')).toEqual([
+      expect.objectContaining({ key: { familyExpiresAt: 1 } }),
+    ]);
+    expect(await ttl('revoked_refresh_token_families')).toEqual([
+      expect.objectContaining({ key: { expiresAt: 1 } }),
+    ]);
   });
 });

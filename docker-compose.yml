@@ -1,19 +1,35 @@
-# Full stack: docker compose up --build   →   http://localhost:8080
+# Full stack in production mode: ./scripts/init-env.sh && docker compose up --build
+#   →  http://localhost:8080
+# For local development, docker-compose.dev.yml adds what must not be on here by default
+# (MongoDB's port, Swagger UI).
 services:
   mongo:
     image: mongo:8
     restart: unless-stopped
-    ports:
-      # Local development and e2e tests only: bound to this machine, never the network.
-      # A shared or internet-facing deployment should also enable MongoDB authentication.
-      - '127.0.0.1:27017:27017'
+    # No published port: only the API can reach MongoDB, over the data network.
+    networks: [data]
+    environment:
+      # Setting a root user turns access control on.
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Run ./scripts/init-env.sh}
+      MONGO_INITDB_DATABASE: auth-app
+      MONGO_APP_USERNAME: auth-app-api
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?Run ./scripts/init-env.sh}
     volumes:
       - mongo-data:/data/db
+      - ./docker/mongo/init-app-user.js:/docker-entrypoint-initdb.d/init-app-user.js:ro
     healthcheck:
-      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand("ping").ok']
+      # Signs in as the API's user, so "healthy" also means the account exists. Uses the container's
+      # own address because the temporary server that runs the init script listens on localhost only.
+      # mongosh reads the password from the environment, which keeps it off the process list.
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --norc "mongodb://$$(hostname):27017/auth-app" --eval
+          'db.auth(process.env.MONGO_APP_USERNAME, process.env.MONGO_APP_PASSWORD)'
       interval: 5s
-      timeout: 5s
-      retries: 10
+      timeout: 10s
+      retries: 12
 
   api:
     build:
@@ -23,16 +39,15 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
+    networks: [data, edge]
     environment:
-      MONGODB_URI: mongodb://mongo:27017/auth-app
-      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (openssl rand -base64 32)}
+      MONGODB_URI: mongodb://auth-app-api:${MONGO_APP_PASSWORD:?Run ./scripts/init-env.sh}@mongo:27017/auth-app?authSource=auth-app
+      JWT_SECRET: ${JWT_SECRET:?Run ./scripts/init-env.sh}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
-      # Plain HTTP on localhost here. Behind HTTPS in production, leave the default (true).
+      # Plain HTTP on localhost here. Behind HTTPS, set COOKIE_SECURE=true.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       TRUST_PROXY_HOPS: 1 # nginx
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      # Swagger UI at /api/docs. Off by default when NODE_ENV=production; on here for reviewers.
-      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-true}
       # Sign-in/sign-up attempts per IP per minute. Raise it only to run e2e tests against this stack.
       AUTH_THROTTLE_LIMIT: ${AUTH_THROTTLE_LIMIT:-5}
 
@@ -44,8 +59,16 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    networks: [edge]
     ports:
-      - '8080:80'
+      # This machine only, because it is plain HTTP. Put a TLS proxy in front before sharing it.
+      - '127.0.0.1:8080:80'
+
+networks:
+  data:
+    # No route to or from the outside.
+    internal: true
+  edge:
 
 volumes:
   mongo-data:

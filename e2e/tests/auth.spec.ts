@@ -121,3 +121,49 @@ test('two tabs restoring the session together do not sign each other out', async
     await expect(welcome(second)).toBeVisible();
   }
 });
+
+test('a lost refresh response does not end the session', async ({ page, context, baseURL }) => {
+  await signUp(page, newAccount());
+  await expect(welcome(page)).toBeVisible();
+
+  // The server rotates the token, but the browser never sees the answer: it keeps the spent cookie.
+  const [cookie] = (await context.cookies(`${baseURL}/api/v1/auth`)).filter(
+    ({ name }) => name === 'refresh_token',
+  );
+  let rotated = 0;
+  await page.route(
+    '**/api/v1/auth/refresh',
+    async (route) => {
+      const response = await fetch(`${baseURL}/api/v1/auth/refresh`, {
+        method: 'POST',
+        headers: { Cookie: `refresh_token=${cookie!.value}` },
+      });
+      rotated = response.status;
+      await route.abort('connectionreset');
+    },
+    { times: 1 },
+  );
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'We can’t reach the server' })).toBeVisible();
+  expect(rotated).toBe(200);
+
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(welcome(page)).toBeVisible();
+  await page.reload();
+  await expect(welcome(page)).toBeVisible();
+});
+
+test('signing out ends the access token of the session at once', async ({ page }) => {
+  await signUp(page, newAccount());
+  const reload = page.waitForRequest('**/api/v1/users/me');
+  await expect(welcome(page)).toBeVisible();
+  await page.reload();
+  const authorization = (await reload).headers()['authorization']!;
+  expect(authorization).toMatch(/^Bearer /);
+  const me = () => page.request.get('/api/v1/users/me', { headers: { authorization } });
+
+  expect((await me()).status()).toBe(200);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+  expect((await me()).status()).toBe(401);
+});

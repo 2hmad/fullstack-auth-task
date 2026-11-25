@@ -1,8 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
-import { CurrentUser } from '@nestjs/authentication';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { apiErrorSchema, userProfileSchema, type UserProfile } from '@auth-app/shared';
-import '../auth/authentication.types.js';
+import { CurrentUser } from '../auth/auth.decorators.js';
 import { toUserProfile } from './user-profile.mapper.js';
 import type { User } from './user.model.js';
 

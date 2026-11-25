@@ -1,8 +1,9 @@
-import { getConnectionToken, MongooseModule } from '@nestjs/mongoose';
+import { getConnectionToken, getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { Test, type TestingModule } from '@nestjs/testing';
-import type { Connection } from 'mongoose';
+import type { Connection, Model } from 'mongoose';
 import { isolatedMongoUri } from '../../test/utils/mongo.js';
 import { EmailAlreadyRegisteredError } from './user.model.js';
+import { UserEntity } from './user.schema.js';
 import { UsersModule } from './users.module.js';
 import { UsersRepository } from './users.repository.js';
 
@@ -46,6 +47,13 @@ describe('UsersRepository (MongoDB)', () => {
     const found = await users.findCredentialsByEmail(ada.email);
     expect(found?.passwordHash).toBe(ada.passwordHash);
     expect(found?.user.email).toBe(ada.email);
+  });
+
+  it('leaves the hash out of any query that does not ask for it', async () => {
+    const model = moduleRef.get<Model<UserEntity>>(getModelToken(UserEntity.name));
+    const doc = await model.findOne({ email: ada.email }).lean().exec();
+    expect(doc).toMatchObject({ email: ada.email });
+    expect(doc).not.toHaveProperty('passwordHash');
   });
 
   it('answers null for an unknown email', async () => {

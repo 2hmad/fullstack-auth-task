@@ -31,6 +31,8 @@ const envSchema = z
       .int()
       .positive()
       .default(30 * 24 * 60 * 60),
+    /** How long a retry of a refresh whose response was lost is answered again. 0: single use, no retry. */
+    REFRESH_TOKEN_REUSE_GRACE_SECONDS: z.coerce.number().int().min(0).max(60).default(30),
     /** Origin of the web app, for CORS. Same-origin deployments do not need CORS at all. */
     WEB_ORIGIN: z.url().default('http://localhost:5173'),
     COOKIE_SECURE: booleanFlag.optional(),

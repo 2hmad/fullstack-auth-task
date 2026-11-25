@@ -9,7 +9,6 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
-import { AuthenticationError, Public } from '@nestjs/authentication';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
   accessTokenSchema,
@@ -25,6 +24,7 @@ import {
 import type { Request, Response } from 'express';
 import { CredentialsThrottle } from '../rate-limit/credentials-throttle.decorator.js';
 import { toUserProfile } from '../users/user-profile.mapper.js';
+import { Public } from './auth.decorators.js';
 import { AuthService, type SignedIn } from './auth.service.js';
 import {
   clearRefreshCookie,
@@ -36,10 +36,7 @@ import {
 export const REFRESH_COOKIE_SETTINGS = Symbol('REFRESH_COOKIE_SETTINGS');
 
 function isUnauthorized(error: unknown): boolean {
-  return (
-    (error instanceof AuthenticationError && error.status === HttpStatus.UNAUTHORIZED) ||
-    (error instanceof HttpException && error.getStatus() === HttpStatus.UNAUTHORIZED)
-  );
+  return error instanceof HttpException && error.getStatus() === HttpStatus.UNAUTHORIZED;
 }
 
 const errorResponse = (status: number, description: string) =>
@@ -96,7 +93,9 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Exchange the refresh_token cookie for a new access token',
-    description: 'Single use: rotates the cookie. Reusing a spent token revokes the session.',
+    description:
+      'Rotates the cookie. A retry within the grace period gets the same answer; any other reuse ' +
+      'of a spent token revokes the session.',
   })
   @ApiResponse({
     status: 200,

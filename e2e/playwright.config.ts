@@ -2,11 +2,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 /**
  * Runs the production builds of the API and the web app (vite preview proxies /api to the API),
- * against the MongoDB at E2E_MONGODB_URI (`docker compose up -d mongo` locally, a service in CI).
+ * on a throwaway in-memory MongoDB, so nothing has to be running first.
  * Set E2E_BASE_URL to test an already running stack instead, e.g. `docker compose up`.
  */
 const baseURL = process.env.E2E_BASE_URL ?? 'http://localhost:4173';
-const mongoUri = process.env.E2E_MONGODB_URI ?? 'mongodb://localhost:27017/auth-app-e2e';
 const isCI = Boolean(process.env.CI);
 
 export default defineConfig({
@@ -30,13 +29,13 @@ export default defineConfig({
     ? undefined
     : [
         {
-          command: 'pnpm --filter @auth-app/api start:prod',
+          command: 'node support/start-api.mjs',
           url: 'http://localhost:3000/health',
           reuseExistingServer: !isCI,
+          gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
           env: {
             NODE_ENV: 'production',
             PORT: '3000',
-            MONGODB_URI: mongoUri,
             JWT_SECRET: 'e2e-only-secret-that-is-at-least-32-bytes',
             WEB_ORIGIN: baseURL,
             // Every test signs in from the same IP.

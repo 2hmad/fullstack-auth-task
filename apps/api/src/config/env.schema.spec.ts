@@ -13,6 +13,7 @@ describe('validateEnv', () => {
       WEB_ORIGIN: 'http://localhost:5173',
       ACCESS_TOKEN_TTL_SECONDS: 900,
       REFRESH_TOKEN_TTL_SECONDS: 604_800,
+      REFRESH_TOKEN_REUSE_GRACE_SECONDS: 30,
       THROTTLE_LIMIT: 100,
       AUTH_THROTTLE_LIMIT: 5,
       LOG_LEVEL: 'info',
@@ -45,6 +46,12 @@ describe('validateEnv', () => {
 
   it('refuses a JWT secret shorter than 32 bytes', () => {
     expect(() => validateEnv({ ...base, JWT_SECRET: 'too-short' })).toThrow(/JWT_SECRET/);
+  });
+
+  it('allows no grace period, but not one long enough to undo reuse detection', () => {
+    const env = (value: string) => ({ ...base, REFRESH_TOKEN_REUSE_GRACE_SECONDS: value });
+    expect(validateEnv(env('0')).REFRESH_TOKEN_REUSE_GRACE_SECONDS).toBe(0);
+    expect(() => validateEnv(env('61'))).toThrow(/REFRESH_TOKEN_REUSE_GRACE_SECONDS/);
   });
 
   it('refuses a refresh token that outlives its own family', () => {

@@ -1,5 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
-import { Public } from '@nestjs/authentication';
+import { Public } from '../auth/auth.decorators.js';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { HealthCheck, HealthCheckService, MongooseHealthIndicator } from '@nestjs/terminus';
 import { SkipThrottle } from '@nestjs/throttler';

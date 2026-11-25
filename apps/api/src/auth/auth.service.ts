@@ -1,8 +1,10 @@
 import { ConflictException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
-import { PasswordHasher, TokenService, type TokenPair } from '@nestjs/authentication';
 import type { SignInPayload, SignUpPayload } from '@auth-app/shared';
 import { EmailAlreadyRegisteredError, type User } from '../users/user.model.js';
 import { UsersRepository } from '../users/users.repository.js';
+import { PasswordHasher } from './password-hasher.js';
+import { RefreshTokenRotator } from './refresh-tokens/refresh-token-rotator.js';
+import { TokenService, type TokenPair } from './token.service.js';
 
 export interface SignedIn {
   tokens: TokenPair;
@@ -19,6 +21,7 @@ export class AuthService {
     private readonly users: UsersRepository,
     private readonly passwordHasher: PasswordHasher,
     private readonly tokens: TokenService,
+    private readonly rotator: RefreshTokenRotator,
   ) {}
 
   async signUp({ email, name, password }: SignUpPayload): Promise<SignedIn> {
@@ -56,17 +59,17 @@ export class AuthService {
   /** Spends the refresh token for a new pair. Unknown, expired or reused tokens are a 401. */
   async refresh(refreshToken: string | undefined): Promise<TokenPair> {
     if (!refreshToken) throw new UnauthorizedException('No active session');
-    return this.tokens.refresh(refreshToken);
+    return this.rotator.rotate(refreshToken);
   }
 
-  /** Revokes the session's refresh-token family. Same answer whether or not the token was known. */
+  /** Revokes the session: its refresh tokens and its access tokens. Same answer whether or not the token was known. */
   async signOut(refreshToken: string | undefined): Promise<void> {
     if (!refreshToken) return;
     await this.tokens.revoke(refreshToken);
   }
 
   private async issue(user: User): Promise<SignedIn> {
-    const tokens = await this.tokens.issue(user.id, { method: 'password' });
+    const tokens = await this.tokens.issue(user.id);
     return { tokens, user };
   }
 }

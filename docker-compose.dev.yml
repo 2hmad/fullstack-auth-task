@@ -1,0 +1,14 @@
+# Local development additions, never for a deployment:
+#   pnpm dev:db        MongoDB on localhost:27017
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#                      the full stack with Swagger UI at /api/docs
+services:
+  mongo:
+    ports:
+      - '127.0.0.1:27017:27017'
+    # The data network is internal, and an internal network cannot publish ports.
+    networks: [data, edge]
+
+  api:
+    environment:
+      SWAGGER_ENABLED: 'true'

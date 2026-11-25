@@ -1,7 +1,8 @@
 import type { SignInPayload, SignUpPayload, UserProfile } from '@auth-app/shared';
 import { createContext, useContext } from 'react';
 
-export type SessionStatus = 'loading' | 'authenticated' | 'anonymous';
+/** `unavailable`: the server could not be asked, so nobody knows whether there is a session. */
+export type SessionStatus = 'loading' | 'authenticated' | 'anonymous' | 'unavailable';
 
 export interface SessionContextValue {
   status: SessionStatus;
@@ -10,6 +11,9 @@ export interface SessionContextValue {
   signUp: (payload: SignUpPayload) => Promise<UserProfile>;
   signOut: () => Promise<void>;
   isSigningOut: boolean;
+  /** Checks the session again while `unavailable`. */
+  retry: () => void;
+  isRetrying: boolean;
 }
 
 export const SessionContext = createContext<SessionContextValue | null>(null);

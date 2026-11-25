@@ -1,8 +1,8 @@
 import type { INestApplication } from '@nestjs/common';
-import { PasswordHasher } from '@nestjs/authentication';
 import { getConnectionToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
 import type { Connection } from 'mongoose';
+import { PasswordHasher } from '../../src/auth/password-hasher.js';
 import { isolatedMongoUri } from './mongo.js';
 
 export const TEST_JWT_SECRET = 'test-secret-that-is-at-least-32-bytes-long!';
@@ -17,6 +17,7 @@ export async function createTestApp(env: Record<string, string> = {}): Promise<I
     JWT_SECRET: TEST_JWT_SECRET,
     THROTTLE_LIMIT: '1000',
     AUTH_THROTTLE_LIMIT: '1000',
+    ACCOUNT_THROTTLE_LIMIT: '1000',
     ...env,
   });
   const { AppModule } = await import('../../src/app.module.js');

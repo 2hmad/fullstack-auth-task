@@ -46,32 +46,51 @@ instead of fighting the framework back to CommonJS + Jest.
 | Refresh | 7 days   | `httpOnly`, `Secure`, `SameSite=Strict` cookie scoped to `/api/v1/auth` |
 
 - Refresh tokens are **single use** and stored **hashed** (SHA-256). Every refresh rotates.
-  Presenting an already-used token means it was stolen: the whole token family is revoked
-  (OAuth 2.0 Security BCP §4.14.2). Logout revokes the family.
+  Presenting a spent token means it was stolen, and the whole session is revoked (OAuth 2.0
+  Security BCP §4.14.2).
+- **Grace period for lost responses** (_added later_). If the server rotates but the answer never
+  arrives, the browser still holds the spent token, and strict reuse detection would sign out its
+  owner. For `REFRESH_TOKEN_REUSE_GRACE_SECONDS` (default 30, at most 60, 0 turns it off) a spent
+  token gets the _same_ pair again, only while that pair is unused and the session is alive.
+  - Cost: detection of a stolen token replayed inside the window is delayed to its next use, not
+    lost, because thief and owner then share one token.
+  - The pairs are held in the memory of one process. Another instance or a restart answers
+    strictly, which is safe but may end the session. A shared store would mean keeping usable
+    tokens at rest, so it was not done.
+- **Revocation is immediate** (_added later_). Every token of a session carries a `sid` claim, and
+  each request checks that the session was not revoked, so logout and theft detection end access
+  tokens too instead of leaving them valid for up to 15 minutes. Cost: one indexed read per
+  request, next to the user lookup that was already there.
+- A 401 clears the cookie. A 429, a 5xx or no answer says nothing about the session, so the cookie
+  and the access token stay, and the web app offers a retry instead of the sign-in form. A failed
+  logout keeps the user signed in and says so, because the session is still alive on the server.
 - On page reload the web app calls `POST /auth/refresh` once to restore the session.
-- A refresh that fails with 401 clears the cookie; an error response (5xx) keeps it, so the
-  session survives once the API recovers. Known gap: if the server rotates the token but the
-  response is lost (timeout, dropped connection), the browser still holds a spent token and the
-  next refresh ends the session. Access tokens are stateless, so they stay valid for up to 15
-  minutes after logout. A failed logout keeps the user signed in and says so,
-  because the session is still alive on the server.
 - **Rejected:** token in `localStorage` (any XSS steals it); one long-lived JWT in a cookie (no
   revocation, no rotation).
 
-## 5. `@nestjs/authentication` instead of hand-rolled JWT + Passport — _Revised_
+## 5. `@nestjs/jwt` and small in-house auth code — _Revised twice_
 
-Planned: `@nestjs/jwt` + argon2 + a custom guard. Nest 12 ships a first-party auth package that
-already provides, tested: a global guard with `@Public()`, `@CurrentUser()`, timing-safe password
-verification (`PasswordHasher`, scrypt), and `TokenService` with rotating refresh tokens and reuse
-detection.
+Planned: `@nestjs/jwt` + argon2 + a custom guard. During the build this became NestJS's pre-1.0
+`@nestjs/authentication` package. It was later replaced again, because a 0.x package should not
+carry the most security-sensitive part of the app. Now:
 
-- **Why:** less custom security code = fewer places to get crypto wrong. The main
-  custom storage code is the MongoDB refresh-token store, which we verify against the package's official
-  `authenticationStoreContract()` suite (including the concurrency cases).
-- **Risk:** the package is 0.x. We pin the exact version (`0.1.7`) and the contract suite catches
-  behaviour changes on upgrade.
-- **scrypt instead of argon2:** OWASP-approved, built into Node (no native addon to compile in
-  Docker/CI), and it is what the package's timing-safe verify uses.
+- **`@nestjs/jwt` 12** (stable, first-party) signs and verifies access tokens: HS256 only, with
+  issuer, audience and expiry enforced on verification, so `alg: none` and key confusion are refused.
+- **`AuthGuard`** (global): every route needs a valid token unless marked `@Public()`, so a forgotten
+  decorator fails closed. It also loads the user and checks that the session was not revoked.
+- **`TokenService`**: rotating single-use refresh tokens with reuse detection (§4), stored as
+  SHA-256. The successor is saved before the old token is spent, so a database failure in between
+  leaves a retryable token rather than a false theft alarm.
+- **`PasswordHasher`**: scrypt from Node's `crypto` (N=2¹⁷, r=8, p=1, OWASP's minimum), constant-time
+  comparison, NFKC normalisation, a dummy hash for unknown emails, and upgrade on sign-in when the
+  cost changes.
+- **Trade-off:** about 300 lines of security code are ours to maintain instead of a library's. They
+  are covered by unit tests on real MongoDB, API e2e tests (forged, expired, unsigned and
+  wrong-audience tokens among them) and fault injection
+  ([SECURITY_REVIEW.md](SECURITY_REVIEW.md#how-it-was-verified)). Passport was not added: one
+  bearer-token strategy does not need it.
+- **scrypt instead of argon2:** OWASP-approved and built into Node, so there is no native addon to
+  compile in Docker or CI.
 
 ## 6. Secure-by-default routes
 
@@ -104,6 +123,10 @@ Protected endpoint: `GET /api/v1/users/me`.
   duplicate-key error is mapped to 409.
 - Refresh tokens: a TTL index on `familyExpiresAt` keeps the collection bounded automatically.
   "Mark used" is one conditional `updateOne` so two concurrent refreshes cannot both win.
+- Socket and queue timeouts (5 s): a database that stops answering fails requests instead of
+  hanging them. The driver retries reads once, so the caller waits about 10 s at most.
+- The compose stack enables access control. The API signs in as a user with `readWrite` on its own
+  database and nothing else; MongoDB is on an internal network with no published port.
 
 ## 9. API shape
 
@@ -112,7 +135,8 @@ Protected endpoint: `GET /api/v1/users/me`.
   `{ statusCode, error, message, path, timestamp, requestId }`, produced by a global exception
   filter. Unexpected errors are logged with their stack and answered with a generic 500.
 - OpenAPI (Swagger UI) at `/api/docs`, generated from the same Zod schemas. Off by default when
-  `NODE_ENV=production` (it maps the attack surface); the compose stack turns it on for reviewers.
+  `NODE_ENV=production`, which includes the compose stack (it maps the attack surface);
+  `docker-compose.dev.yml` turns it on for local use.
 
 ## 10. Logging
 
@@ -128,28 +152,34 @@ response), and `authorization`, `cookie`, `set-cookie` and `password` redacted.
   `PASSWORD_RULES`; show/hide password; errors linked with `aria-describedby`.
 - **Server state:** TanStack Query. A small `fetch` wrapper attaches the access token, and on a 401
   refreshes once (deduplicated across concurrent requests) and retries.
-- **UI:** Tailwind CSS + shadcn/ui (Radix primitives: accessible by default), light/dark.
+- **UI:** Tailwind CSS + shadcn/ui components (Radix primitives: accessible by default), light/dark.
+  The components live in the repository; the shadcn CLI package and its `cn` helper were replaced by
+  `clsx` and `tailwind-merge`, which removed about 165 installed packages.
 - **Same origin:** Vite proxies `/api` in development, nginx in production. This is what makes
   `SameSite=Strict` cookies work and removes CORS from the browser path.
 
 ## 12. Testing strategy
 
-| Layer        | Tool                                                    | Covers                                                   |
-| ------------ | ------------------------------------------------------- | -------------------------------------------------------- |
-| Shared rules | Vitest                                                  | every field rule and edge case                           |
-| API unit     | Vitest + `@nestjs/testing`                              | services, repository mapping, error filter               |
-| API store    | `authenticationStoreContract()` + mongodb-memory-server | refresh-token store contract, concurrency                |
-| API e2e      | Supertest + mongodb-memory-server                       | every route, status codes, cookies, rotation, reuse      |
-| Web unit     | Vitest + Testing Library                                | forms, validation messages, route guards                 |
-| Full flow    | Playwright                                              | sign up → app → logout → sign in, against the real stack |
+| Layer        | Tool                              | Covers                                                 |
+| ------------ | --------------------------------- | ------------------------------------------------------ |
+| Shared rules | Vitest                            | every field rule and edge case                         |
+| API unit     | Vitest + `@nestjs/testing`        | services, repository mapping, error filter             |
+| API auth     | Vitest + mongodb-memory-server    | token rotation, reuse, expiry, store concurrency, hash |
+| API e2e      | Supertest + mongodb-memory-server | every route, status codes, cookies, rotation, reuse    |
+| Web unit     | Vitest + Testing Library          | forms, validation messages, route guards               |
+| Full flow    | Playwright                        | sign up → app → logout → sign in, lost responses, tabs |
+| Deployment   | `scripts/verify-stack.sh`         | MongoDB access control, closed docs, security headers  |
 
 ## 13. Delivery
 
-- GitHub Actions: lint, type-check, test and build every package; then Playwright against the
-  built stack.
-- `docker compose up` runs MongoDB, the API and nginx serving the web app. nginx sends the CSP
-  and other security headers from one include file in every location (nginx drops server-level
-  `add_header`s in any location that sets its own). MongoDB's port is bound to 127.0.0.1 only;
-  MongoDB authentication is not enabled, so this stack is for local use.
-- Conventional commits grouped by topic. The order is logical rather than a timeline: later
-  corrections were folded into the commits they belong to.
+- GitHub Actions: audit, lint, type-check, test and build every package; Playwright against the
+  production builds on an in-memory MongoDB; and Playwright plus `scripts/verify-stack.sh` against
+  the compose stack in production mode.
+- `docker compose up` runs MongoDB, the API and nginx serving the web app. nginx sends the CSP and
+  other security headers from one include file in every location (nginx drops server-level
+  `add_header`s in any location that sets its own), and resolves the API's name at request time, so
+  replacing the API container does not leave it proxying to the old address.
+- The stack is plain HTTP, so its port is bound to 127.0.0.1 and the cookie's `Secure` flag is off
+  there. A shared deployment needs a TLS proxy and `COOKIE_SECURE=true`.
+- Conventional commits grouped by topic. The order is logical rather than a timeline: most
+  corrections were folded together.

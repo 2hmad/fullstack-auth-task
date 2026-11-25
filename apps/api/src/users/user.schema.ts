@@ -1,5 +1,4 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import type { HydratedDocument } from 'mongoose';
 
 @Schema({ collection: 'users', timestamps: true, versionKey: false })
 export class UserEntity {
@@ -17,6 +16,4 @@ export class UserEntity {
   createdAt: Date;
   updatedAt: Date;
 }
-
-export type UserDocument = HydratedDocument<UserEntity>;
 export const UserSchema = SchemaFactory.createForClass(UserEntity);

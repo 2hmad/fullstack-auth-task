@@ -45,11 +45,12 @@ export function refreshAccessToken(): Promise<string | null> {
   inFlightRefresh ??= withRefreshLock(async () => {
     const startedAt = accessTokenStore.generation();
     const response = await send(REFRESH_PATH, { method: 'POST' });
-    if (!response.ok) {
+    if (response.status === 401) {
       accessTokenStore.clear();
-      if (response.status === 401) return null;
-      throw await ApiError.fromResponse(response);
+      return null;
     }
+    // Anything else (429, 5xx) says nothing about the session: keep it and let the caller retry.
+    if (!response.ok) throw await ApiError.fromResponse(response);
     const { accessToken } = accessTokenSchema.parse(await response.json());
     // Signed out while this was in flight: the new token must not revive the session.
     if (accessTokenStore.generation() !== startedAt) return null;

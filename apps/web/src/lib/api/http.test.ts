@@ -54,6 +54,25 @@ describe('apiRequest', () => {
     unsubscribe();
   });
 
+  it.each([429, 500, 503])('keeps the session when the refresh answers %i', async (status) => {
+    server.use(http.post('*/api/v1/auth/refresh', () => new HttpResponse(null, { status })));
+    accessTokenStore.set('expired-token');
+    const expired = vi.fn();
+    const unsubscribe = onSessionExpired(expired);
+
+    await expect(apiRequest('/users/me')).rejects.toMatchObject({ status });
+    expect(expired).not.toHaveBeenCalled();
+    expect(accessTokenStore.get()).toBe('expired-token');
+    unsubscribe();
+  });
+
+  it('keeps the session when the refresh never reaches the server', async () => {
+    server.use(http.post('*/api/v1/auth/refresh', () => HttpResponse.error()));
+    accessTokenStore.set('expired-token');
+    await expect(apiRequest('/users/me')).rejects.toMatchObject({ status: 0 });
+    expect(accessTokenStore.get()).toBe('expired-token');
+  });
+
   it('does not refresh when a credential endpoint answers 401', async () => {
     accessTokenStore.set('some-token');
     await expect(

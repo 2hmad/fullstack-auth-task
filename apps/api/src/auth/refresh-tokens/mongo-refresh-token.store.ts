@@ -1,10 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import {
-  AuthenticationStorage,
-  type RefreshTokenRecord,
-  type RefreshTokenStore,
-} from '@nestjs/authentication';
 import type { Model } from 'mongoose';
 import { RefreshTokenEntity, RevokedRefreshTokenFamilyEntity } from './refresh-token.schema.js';
 
@@ -15,47 +10,49 @@ export interface RefreshTokenStoreOptions {
   absoluteTtlSeconds: number;
 }
 
-type StoredToken = RefreshTokenEntity;
-
-function toRecord(doc: StoredToken): RefreshTokenRecord {
-  const record: RefreshTokenRecord = {
-    id: doc._id,
-    familyId: doc.familyId,
-    userId: doc.userId,
-    createdAt: doc.createdAt,
-    expiresAt: doc.expiresAt,
-    familyExpiresAt: doc.familyExpiresAt,
-  };
-  // The contract wants optional fields absent, never null.
-  if (doc.usedAt) record.usedAt = doc.usedAt;
-  if (doc.claims) record.claims = doc.claims;
-  return record;
+/** One refresh token. A family is one session: every token rotated from one sign-in. */
+export interface RefreshTokenRecord {
+  /** SHA-256 of the token; the token itself is never stored. */
+  id: string;
+  familyId: string;
+  userId: string;
+  createdAt: Date;
+  expiresAt: Date;
+  familyExpiresAt: Date;
+  usedAt?: Date;
 }
 
-/**
- * MongoDB storage for `@nestjs/authentication` refresh tokens (rotation + reuse detection).
- * Verified against the package's `authenticationStoreContract()` suite.
- */
+function toRecord(doc: RefreshTokenEntity): RefreshTokenRecord {
+  const { _id, familyId, userId, createdAt, expiresAt, familyExpiresAt, usedAt } = doc;
+  return {
+    id: _id,
+    familyId,
+    userId,
+    createdAt,
+    expiresAt,
+    familyExpiresAt,
+    ...(usedAt && { usedAt }),
+  };
+}
+
+/** MongoDB storage for refresh tokens and revoked sessions. */
 @Injectable()
-export class MongoRefreshTokenStore implements RefreshTokenStore {
+export class MongoRefreshTokenStore {
   constructor(
     @InjectModel(RefreshTokenEntity.name) private readonly tokens: Model<RefreshTokenEntity>,
     @InjectModel(RevokedRefreshTokenFamilyEntity.name)
     private readonly revokedFamilies: Model<RevokedRefreshTokenFamilyEntity>,
     @Inject(REFRESH_TOKEN_STORE_OPTIONS) private readonly options: RefreshTokenStoreOptions,
-    storage: AuthenticationStorage,
-  ) {
-    storage.registerSource({ refreshTokens: this });
-  }
+  ) {}
 
   async getRefreshToken(id: string): Promise<RefreshTokenRecord | undefined> {
-    const doc = await this.tokens.findById(id).lean<StoredToken>().exec();
+    const doc = await this.tokens.findById(id).lean<RefreshTokenEntity>().exec();
     return doc ? toRecord(doc) : undefined;
   }
 
-  async saveRefreshToken(record: RefreshTokenRecord): Promise<void> {
+  async saveRefreshToken({ id, ...record }: RefreshTokenRecord): Promise<void> {
     // Expired families are removed by the TTL index on familyExpiresAt.
-    await this.tokens.create({ ...record, _id: record.id });
+    await this.tokens.create({ ...record, _id: id });
   }
 
   /** One conditional write: of concurrent calls for the same token, exactly one returns true. */
@@ -66,36 +63,27 @@ export class MongoRefreshTokenStore implements RefreshTokenStore {
     return result.modifiedCount === 1;
   }
 
+  /**
+   * Kept apart from the tokens, and for the longest possible family lifetime, so it also covers
+   * tokens of the family saved after it (a refresh that lost the race to a reuse).
+   */
   async revokeRefreshTokenFamily(familyId: string): Promise<void> {
+    const now = Date.now();
     await this.revokedFamilies
-      .updateOne({ _id: familyId }, { $setOnInsert: this.revocation() }, { upsert: true })
+      .updateOne(
+        { _id: familyId },
+        {
+          $setOnInsert: {
+            revokedAt: new Date(now),
+            expiresAt: new Date(now + this.options.absoluteTtlSeconds * 1000),
+          },
+        },
+        { upsert: true },
+      )
       .exec();
   }
 
   async isRefreshTokenFamilyRevoked(familyId: string): Promise<boolean> {
     return (await this.revokedFamilies.exists({ _id: familyId }).exec()) !== null;
-  }
-
-  async revokeUserRefreshTokens(userId: string): Promise<void> {
-    const familyIds = (await this.tokens.distinct('familyId', { userId }).exec()) as string[];
-    if (familyIds.length === 0) return;
-    await this.revokedFamilies.bulkWrite(
-      familyIds.map((familyId) => ({
-        updateOne: {
-          filter: { _id: familyId },
-          update: { $setOnInsert: this.revocation() },
-          upsert: true,
-        },
-      })),
-    );
-  }
-
-  /** Kept for the longest possible family lifetime, so it covers every token the family can still produce. */
-  private revocation() {
-    const now = Date.now();
-    return {
-      revokedAt: new Date(now),
-      expiresAt: new Date(now + this.options.absoluteTtlSeconds * 1000),
-    };
   }
 }

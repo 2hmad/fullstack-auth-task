@@ -1,4 +1,4 @@
-import { cn } from 'cn';
+import { cn } from '@/lib/utils';
 
 /** Logo: an open doorway. The product is the way in. */
 export function BrandMark({ className }: { className?: string }) {

@@ -1,5 +1,4 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Schema as MongooseSchema } from 'mongoose';
 
 /** One refresh token. `_id` is the SHA-256 of the token: the token itself is never stored. */
 @Schema({ collection: 'refresh_tokens', versionKey: false })
@@ -25,9 +24,6 @@ export class RefreshTokenEntity {
 
   @Prop({ type: Date })
   usedAt?: Date;
-
-  @Prop({ type: MongooseSchema.Types.Mixed })
-  claims?: Record<string, unknown>;
 }
 
 export const RefreshTokenSchema = SchemaFactory.createForClass(RefreshTokenEntity);

@@ -1,6 +1,6 @@
 import { PASSWORD_RULES } from '@auth-app/shared';
 import { Check } from 'lucide-react';
-import { cn } from 'cn';
+import { cn } from '@/lib/utils';
 
 /**
  * Live checklist driven by the same PASSWORD_RULES the API enforces: four segments fill as
