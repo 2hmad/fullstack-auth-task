@@ -39,10 +39,10 @@ instead of fighting the framework back to CommonJS + Jest.
 
 ## 4. Authentication: short-lived access token in memory, rotating refresh token in an httpOnly cookie
 
-| Token   | Lifetime | Where it lives                                                             |
-| ------- | -------- | -------------------------------------------------------------------------- |
-| Access  | 15 min   | JS memory only (never `localStorage`), sent as `Authorization: Bearer`     |
-| Refresh | 7 days   | `httpOnly`, `Secure`, `SameSite=Strict` cookie scoped to `/api/v1/auth`    |
+| Token   | Lifetime | Where it lives                                                          |
+| ------- | -------- | ----------------------------------------------------------------------- |
+| Access  | 15 min   | JS memory only (never `localStorage`), sent as `Authorization: Bearer`  |
+| Refresh | 7 days   | `httpOnly`, `Secure`, `SameSite=Strict` cookie scoped to `/api/v1/auth` |
 
 - Refresh tokens are **single use** and stored **hashed** (SHA-256). Every refresh rotates.
   Presenting an already-used token means it was stolen: the whole token family is revoked
@@ -121,14 +121,14 @@ response), and `authorization`, `cookie`, `set-cookie` and `password` redacted.
 
 ## 12. Testing strategy
 
-| Layer        | Tool                                    | Covers                                               |
-| ------------ | --------------------------------------- | ---------------------------------------------------- |
-| Shared rules | Vitest                                  | every field rule and edge case                       |
-| API unit     | Vitest + `@nestjs/testing`              | services, repository mapping, error filter           |
-| API store    | `authenticationStoreContract()` + mongodb-memory-server | refresh-token store contract, concurrency |
-| API e2e      | Supertest + mongodb-memory-server       | every route, status codes, cookies, rotation, reuse  |
-| Web unit     | Vitest + Testing Library                | forms, validation messages, route guards             |
-| Full flow    | Playwright                              | sign up → app → logout → sign in, against the real stack |
+| Layer        | Tool                                                    | Covers                                                   |
+| ------------ | ------------------------------------------------------- | -------------------------------------------------------- |
+| Shared rules | Vitest                                                  | every field rule and edge case                           |
+| API unit     | Vitest + `@nestjs/testing`                              | services, repository mapping, error filter               |
+| API store    | `authenticationStoreContract()` + mongodb-memory-server | refresh-token store contract, concurrency                |
+| API e2e      | Supertest + mongodb-memory-server                       | every route, status codes, cookies, rotation, reuse      |
+| Web unit     | Vitest + Testing Library                                | forms, validation messages, route guards                 |
+| Full flow    | Playwright                                              | sign up → app → logout → sign in, against the real stack |
 
 ## 13. Delivery
 

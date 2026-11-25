@@ -105,13 +105,19 @@ describe('signUpSchema', () => {
   it('requires every field', () => {
     const result = signUpSchema.safeParse({});
     expect(result.success).toBe(false);
-    expect(result.error?.issues.map((issue) => issue.path[0])).toEqual(['email', 'name', 'password']);
+    expect(result.error?.issues.map((issue) => issue.path[0])).toEqual([
+      'email',
+      'name',
+      'password',
+    ]);
   });
 });
 
 describe('signInSchema', () => {
   it('does not apply strength rules, so passwords set under older rules still sign in', () => {
-    expect(signInSchema.safeParse({ email: 'ada@example.com', password: 'weak' }).success).toBe(true);
+    expect(signInSchema.safeParse({ email: 'ada@example.com', password: 'weak' }).success).toBe(
+      true,
+    );
   });
 
   it('requires a non-empty password', () => {
