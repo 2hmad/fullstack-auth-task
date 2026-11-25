@@ -1,8 +1,8 @@
 # Architecture decisions
 
-The main decisions were proposed and approved **before** implementation. Entries marked _Revised_
-were changed during the build, when the tooling turned out to be newer than planned. Each entry:
-what we chose, why, and what we gave up.
+The main decisions were settled **before** implementation, from options and trade-offs prepared with
+AI (see [AI.md](../AI.md)). Entries marked _Revised_ changed later, mostly because the tooling turned
+out to be newer than planned. Each entry: what was chosen, why, and what was given up.
 
 ---
 
@@ -106,8 +106,12 @@ Protected endpoint: `GET /api/v1/users/me`.
   5 sign-in/sign-up attempts per minute per IP; 10 per 15 minutes per submitted email, which
   slows guessing one account from many IPs. The email is normalised by the same schema that
   validates the request, so padding or letter case cannot dodge the budget. Trade-offs: anyone
-  can use up another person's budget for 15 minutes, successful sign-ins count too, and counts
-  are kept in memory per API instance.
+  can use up another person's budget for 15 minutes, and successful sign-ins count too.
+- **Where the counts live** (_revised for Vercel_). The two budgets against password guessing are in
+  MongoDB, so running several instances, or restarting, does not multiply them: one atomic update on
+  the database's clock per attempt, keys hashed, a TTL index for cleanup. The general budget stays in
+  memory, because it only protects an instance from load and would cost a write per request.
+- API responses are `Cache-Control: no-store`: they carry tokens, and Vercel labelled them `public`.
 - **No user enumeration on sign-in:** unknown email and wrong password get the same 401 body, and
   `PasswordHasher.verify()` checks a dummy hash when the user does not exist so timing matches.
 - **Sign-up with a taken email returns 409.** This does reveal that an address is registered;
@@ -168,7 +172,7 @@ response), and `authorization`, `cookie`, `set-cookie` and `password` redacted.
 | API e2e      | Supertest + mongodb-memory-server | every route, status codes, cookies, rotation, reuse    |
 | Web unit     | Vitest + Testing Library          | forms, validation messages, route guards               |
 | Full flow    | Playwright                        | sign up → app → logout → sign in, lost responses, tabs |
-| Deployment   | `scripts/verify-stack.sh`         | MongoDB access control, closed docs, security headers  |
+| Deployment   | `scripts/verify-*.sh`             | MongoDB access control, closed docs, security headers  |
 
 ## 13. Delivery
 
@@ -181,5 +185,11 @@ response), and `authorization`, `cookie`, `set-cookie` and `password` redacted.
   replacing the API container does not leave it proxying to the old address.
 - The stack is plain HTTP, so its port is bound to 127.0.0.1 and the cookie's `Secure` flag is off
   there. A shared deployment needs a TLS proxy and `COOKIE_SECURE=true`.
+- **Vercel** (demo): the web app as static files and the API from its Dockerfile, as two services on
+  one domain, which the `SameSite=Strict` cookie needs. Vercel's own NestJS build was tried first. It
+  left packages such as mongoose out of the bundle, and once that was worked around its launcher
+  could not `require()` NestJS 12's ES modules. The Dockerfile is what CI tests anyway.
+  `vercel.json` repeats nginx's security headers; a test fails if the two differ.
+  `scripts/verify-deployment.sh` checks the live site; CI does not deploy or run it.
 - Conventional commits grouped by topic. The order is logical rather than a timeline: most
   corrections were folded together.

@@ -2,6 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
+import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 import type { AppConfig } from './config/config.types.js';
 import { setupSwagger } from './docs/swagger.js';
@@ -23,6 +24,11 @@ export function configureApp(app: INestApplication): void {
   app.setGlobalPrefix(API_PREFIX, { exclude: ['health', 'ready'] });
   app.use(helmet());
   app.use(cookieParser());
+  // Responses carry tokens and profiles; without this a platform may label them `public`.
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
   // Same-origin in practice (Vite proxy / nginx); CORS only matters if the web app is hosted elsewhere.
   app.enableCors({ origin: webOrigin, credentials: true });
   // Rejects cross-site state-changing requests using Fetch Metadata, on top of SameSite=Strict.

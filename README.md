@@ -3,6 +3,8 @@
 A production-minded authentication module: **NestJS 12 + MongoDB** API and a **React 19 +
 TypeScript** web app, in one pnpm monorepo.
 
+**Live demo:** <https://fullstack-auth-task.vercel.app>
+
 ![Sign-up page](docs/screenshots/sign-up.png)
 
 | Sign up (dark mode)                        | Mobile                                         | Application page                                 |
@@ -28,7 +30,7 @@ TypeScript** web app, in one pnpm monorepo.
 | At least one protected endpoint                                        | `GET /api/v1/users/me`. Every route is protected by default; public ones opt out with `@Public()`.                                                                              |
 | README                                                                 | This file                                                                                                                                                                       |
 | AI.md                                                                  | [AI.md](AI.md)                                                                                                                                                                  |
-| _Bonus:_ logging, error handling, tests, CI/CD, API docs               | pino structured logs with request ids; uniform error body; 186 unit/integration tests and 18 browser runs; GitHub Actions; Swagger at `/api/docs` (development)                 |
+| _Bonus:_ logging, error handling, tests, CI/CD, API docs               | pino structured logs with request ids; uniform error body; 198 unit/integration tests and 18 browser runs; GitHub Actions; Swagger at `/api/docs` (development)                 |
 
 ## Quick start (Docker, ~2 minutes)
 
@@ -95,7 +97,7 @@ minute per IP would otherwise (correctly) block the test run.
 ```
 apps/
   api/                 NestJS API
-    src/auth/          sign up/in, refresh, logout, JWT provider, MongoDB refresh-token store
+    src/auth/          sign up/in, refresh, logout, guard, tokens, password hashing
     src/users/         user schema, repository, GET /users/me
     src/common/        global exception filter, request ids
     src/config/        environment schema (validated at startup)
@@ -107,7 +109,7 @@ apps/
     nginx.conf         production web server + same-origin API proxy
 packages/shared/       Zod schemas for requests and responses, shared by API and web
 e2e/                   Playwright tests of the whole stack
-docker/  scripts/      MongoDB user setup, secret generation, stack verification
+docker/  scripts/      MongoDB user setup, secret generation, stack and deployment verification
 docs/                  DECISIONS.md, SECURITY_REVIEW.md, screenshots
 ```
 
@@ -157,12 +159,12 @@ More detail and the alternatives considered: [docs/DECISIONS.md §4–7](docs/DE
 | Suite                                | Tests | Notes                                                                                            |
 | ------------------------------------ | ----- | ------------------------------------------------------------------------------------------------ |
 | `packages/shared`                    | 34    | every field rule and edge case                                                                   |
-| `apps/api` unit + integration        | 69    | auth services, password hashing, logging, repository and token store on real (in-memory) MongoDB |
-| `apps/api` e2e                       | 42    | every route through the real app: cookies, rotation, reuse, CSRF, 429s                           |
-| `apps/web`                           | 41    | forms, guards, session restore, outages, refresh-and-retry (MSW fake API)                        |
+| `apps/api` unit + integration        | 78    | auth services, password hashing, logging, repository and token store on real (in-memory) MongoDB |
+| `apps/api` e2e                       | 44    | every route through the real app: cookies, rotation, reuse, CSRF, 429s                           |
+| `apps/web`                           | 42    | forms, guards, session restore, outages, refresh-and-retry (MSW fake API)                        |
 | `e2e` (Playwright, desktop + mobile) | 18    | 9 scenarios: real browser → nginx/Vite → API → MongoDB                                           |
 
-Line coverage: API 99%, web 98%, shared 100%. Branch coverage: API 91%, web 93%.
+Line coverage: API 99%, web 98%, shared 100%. Branch coverage: API 89%, web 93%.
 
 The refresh-token store and token rotation are tested on real (in-memory) MongoDB, including
 concurrent refreshes of one token, where exactly one may win.
@@ -182,12 +184,23 @@ The compose stack is a production-mode build for one machine. Before exposing it
 2. Set `COOKIE_SECURE=true` and `WEB_ORIGIN=https://your-host` in `.env`.
 3. Set `TRUST_PROXY_HOPS` in `docker-compose.yml` to the number of proxies, nginx included, or rate
    limits see the wrong address.
-4. Keep one API instance, or move rate limits to a shared store: counts are per process, and so is
-   the grace period for lost refresh responses (which fails safe, see DECISIONS §4).
+4. Several API instances share the password-guessing limits through MongoDB. The general 100 req/min
+   limit and the grace period for lost refresh responses stay per instance (the latter fails safe,
+   see DECISIONS §4).
+
+### Vercel and MongoDB Atlas
+
+This is how the live demo runs. [`vercel.json`](vercel.json) declares two
+[services](https://vercel.com/docs/services) on one domain: the web app as static files, and the API
+from the same Dockerfile as the compose stack. Both features are in beta at Vercel.
+
+1. Create an Atlas database user with `readWrite` on `auth-app` only. Vercel has no fixed addresses,
+   so Atlas must accept connections from anywhere (`0.0.0.0/0`).
+2. Set these for Production only: `MONGODB_URI` (with `/auth-app` as the path), `JWT_SECRET`,
+   `WEB_ORIGIN`, `PORT=3000`, `TRUST_PROXY_HOPS=1`, `COOKIE_SECURE=true`, `SWAGGER_ENABLED=false`.
+3. Deploy, then run `./scripts/verify-deployment.sh https://your-host`.
 
 ## What I would add next
 
-- Email verification and password reset (the auth package supports both; they need an email
-  provider).
-- Redis-backed rate limiting once the API runs on more than one instance.
+- Email verification and password reset (they need an email provider).
 - Route-level code splitting (the JS bundle is ~166 kB gzipped, mostly React and Zod).

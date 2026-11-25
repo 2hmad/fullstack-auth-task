@@ -1,56 +1,79 @@
 # AI usage
 
-AI was used extensively, from architecture exploration to documentation. The tool was Claude Code
-(Claude Opus 5.5), which wrote nearly all of the code, tests and documentation.
+I led this project as its engineer and used AI as the tool. I set the requirements and the quality
+bar, weighed the options and chose the architecture, directed the work from the first plan to the
+public deployment, review the code, and own the result.
 
-I supplied the assessment brief, its acceptance criteria and the working rules, approved the
-architecture after the options and trade-offs were presented, review the code, and own the delivered
-result. The automated tests, runtime probes and checks against package source or documentation were
-mostly run by the AI.
+Claude Code (Claude Opus 5.5) was used extensively: it laid out options and their trade-offs, and
+wrote nearly all of the code, tests and documentation within the decisions below. The work ran the
+way a team's should: agreed design first, directed rounds, and evidence before anything counted as
+done.
 
 Related: [architecture and trade-offs](docs/DECISIONS.md),
 [security findings and verification](docs/SECURITY_REVIEW.md).
 
-## 1. Ownership
+## 1. How I led the work
 
-| Area                          | Developer                                                           | AI                                       |
-| ----------------------------- | ------------------------------------------------------------------- | ---------------------------------------- |
-| Requirements                  | Supplied the brief; required decisions before code                  | Mapped requirements to features          |
-| Architecture, dependencies    | Approved the recommended set; kept four later changes               | Proposed options; made those changes     |
-| Auth, security, API contracts | Approved the token strategy, controls and error format              | Analysed, implemented, ran the reviews   |
-| Hardening                     | Required known gaps to be fixed, not only documented; set the order | Designed and implemented the fixes       |
-| Testing                       | Approved the plan; required claims here to be verified              | Wrote and ran tests; diagnosed and fixed |
-| Code review                   | Reviews the code                                                    | Two AI reviews, fault injection          |
-| Release                       | Authorised publication                                              | Compared the result with the brief       |
+- **Design before code.** My first instruction was that every decision is made before any code is
+  written. Token storage, account enumeration, the error format and the test strategy were settled
+  at that point, when changing them cost nothing.
+- **Trade-offs on the table.** Each major choice came with its alternatives and costs. I chose with
+  those in view, and the costs are written down in DECISIONS rather than hidden.
+- **Fix it, don't word it.** When the review listed known gaps, I required the project itself to be
+  fixed instead of the gaps being described better, and set the order: database authentication,
+  closed API docs, refresh tokens, dependencies, CI, tests and security findings.
+- **Stability over novelty.** I did not accept a pre-1.0 package in the authentication code, although
+  it was working and tested.
+- **Evidence over claims.** Statements in these documents had to be checked against the repository,
+  including the uncomfortable ones.
+- **Clear ownership of documents.** I gave each document one purpose, so a reader knows where to look.
 
-| Decision                                                    | Origin                                                       |
-| ----------------------------------------------------------- | ------------------------------------------------------------ |
-| In-memory access token, rotating httpOnly refresh cookie    | AI proposal, approved                                        |
-| 409 for a registered email at sign-up                       | AI proposal, approved                                        |
-| scrypt, shared Zod, Vitest                                  | AI changes to the approved plan, kept by me afterwards       |
-| Pre-1.0 auth package replaced by `@nestjs/jwt` and own code | Required by me; AI design                                    |
-| MongoDB authentication; Swagger off in the compose stack    | Required by me; AI design                                    |
-| Grace period, immediate revocation, database timeouts       | AI design, from my request to review refresh-token behaviour |
-| `shadcn` CLI and `cn` removed                               | AI choice, from my request to review dependencies            |
+## 2. Decisions I made
 
-## 2. Workflow
+The AI proposed options and detailed designs; the choice was mine. Two entries, the shared schemas
+and scrypt, replaced the first plan during the build, and I kept them.
 
-1. **Requirements.** The opening prompt attached the PDF and asked for every decision before any
-   code. It was the most effective prompt: token storage, enumeration and error format surfaced
-   early.
-2. **Suggestions, then approval.** Claude returned a decision table with recommendations; I accepted
-   the recommended set.
-3. **Scaffolding.** `nest new`, `create-vite`, `shadcn init`, then trimmed. For versions newer than
-   the model knew, Claude read the installed docs and types.
-4. **Implementation and tests.** Core API modules and the later hardening were test-first. The first
-   API e2e specs ran after the wiring, and most early web tests followed the code.
-5. **Review.** A second Claude agent read the code; later the implementing agent re-reviewed fixes,
-   tests and dependencies, including fault injection.
+| Decision                                                             | Why                                                                        |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Access token in memory, rotating refresh token in an httpOnly cookie | Nothing for XSS to steal from storage; sessions can be revoked             |
+| 409 for a registered email at sign-up                                | Clear for users; the disclosure is accepted and rate-limited               |
+| One set of Zod schemas for the form and the API                      | The two sides cannot drift apart                                           |
+| scrypt from Node's `crypto`                                          | OWASP-approved, with no native dependency                                  |
+| `@nestjs/jwt` and small own code instead of a pre-1.0 package        | Stable base under the most sensitive code, for about 300 lines to own      |
+| MongoDB authentication and a least-privilege user in the stack       | Network isolation alone is not access control                              |
+| API docs off in production                                           | They map the attack surface                                                |
+| Immediate revocation and a 30-second grace period                    | Logout means logout; a lost response is not treated as a theft             |
+| Fewer dependencies, audited in CI                                    | About 165 fewer packages to trust                                          |
+| Public demo on Vercel and MongoDB Atlas                              | A reviewer can try it; it also led to rate limits shared between instances |
 
-Commits are grouped by topic; their order is logical rather than a timeline. Results: 186 unit and
-integration tests and 18 browser runs pass, with coverage in the [README](README.md#testing).
+Trade-offs I decided to keep:
 
-## 3. Corrections
+1. The per-account limit counts successful sign-ins too, and lets anyone lock another person out for
+   15 minutes. It slows guessing one account's password from many addresses.
+2. The 30-second grace period tolerates lost responses at the cost of later theft detection.
+3. The compose stack is plain HTTP and listens on 127.0.0.1 only. It needs TLS and a proxy before it
+   is shared. The Vercel demo has TLS.
+
+## 3. Workflow
+
+| Step           | Me                                                                 | AI                                                       |
+| -------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
+| Requirements   | Supplied the brief, the acceptance criteria and the working rules  | Mapped requirements to features                          |
+| Architecture   | Weighed the options and chose                                      | Prepared options with trade-offs                         |
+| Implementation | Set the direction and priorities                                   | Wrote the code; read installed docs for new versions     |
+| Testing        | Approved the strategy; required verified results                   | Wrote and ran tests, probes and fault injection          |
+| Review         | Review the code; decided which findings to fix and which to accept | Two AI reviews, one by an agent outside the conversation |
+| Documentation  | Defined each document's purpose; corrected its content             | Wrote the text                                           |
+| Release        | Authorised publication; chose the hosting; set up Atlas            | Configured, deployed and probed                          |
+
+Core API modules and the later hardening were test-first. The first API e2e specs ran after the
+wiring, and most early web tests followed the code. Commits are grouped by topic; their order is
+logical rather than a timeline. Results: 198 unit and integration tests and 18 browser runs pass,
+with coverage in the [README](README.md#testing).
+
+## 4. Corrections
+
+AI output was a starting point, not a source of truth. What was wrong, and how it was caught:
 
 | Issue                                                                              | How it was noticed      | Resolution                                      |
 | ---------------------------------------------------------------------------------- | ----------------------- | ----------------------------------------------- |
@@ -66,13 +89,5 @@ integration tests and 18 browser runs pass, with coverage in the [README](README
 | nginx kept the old API address after a container was replaced                      | Testing the stack       | Resolved at request time                        |
 | Mobile gap, truncated email, invisible check marks                                 | Screenshots             | CSS fixes; no regression tests                  |
 | Scripted edits that silently did not apply; a command chain that skipped lint      | Lint, re-reading output | Redone with strict checks                       |
+| Vercel build ran locally but failed on Vercel (ES modules)                         | Live probe              | API deployed from its Dockerfile                |
 | A process-kill pattern was too broad                                               | Later audit             | Containers checked; **effect on host unknown**  |
-
-**Rejected by the AI:** `Secure` cookies in the local HTTP stack, with the reason recorded.
-
-## 4. Trade-offs I decided to keep
-
-1. The per-account limit counts successful sign-ins too, and lets anyone lock another person out for
-   15 minutes. It slows guessing one account's password from many addresses.
-2. The 30-second grace period tolerates lost responses at the cost of later theft detection.
-3. The stack listens on 127.0.0.1 only. TLS and a proxy are needed before any shared deployment.

@@ -2,11 +2,15 @@ import { emailSchema } from '@auth-app/shared';
 import { Module, type ExecutionContext } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_GUARD, Reflector } from '@nestjs/core';
+import { getModelToken, MongooseModule } from '@nestjs/mongoose';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import type { Request } from 'express';
+import type { Model } from 'mongoose';
 import type { AppConfig } from '../config/config.types.js';
 import type { User } from '../users/user.model.js';
 import { CREDENTIALS_THROTTLE } from './credentials-throttle.decorator.js';
+import { MongoThrottlerStorage } from './mongo-throttler.storage.js';
+import { RateLimitEntity, RateLimitSchema } from './rate-limit.schema.js';
 
 const ONE_MINUTE_MS = 60_000;
 const FIFTEEN_MINUTES_MS = 15 * ONE_MINUTE_MS;
@@ -31,18 +35,24 @@ function submittedEmail(context: ExecutionContext): string | null {
  *   Trade-off: someone can exhaust another person's budget for 15 minutes. The limit is
  *   generous enough that a real user rarely notices, and it stops distributed guessing.
  *
- * Imported after AuthenticationModule: global guards run in module order, so the
+ * The last two are shared between API instances (MongoThrottlerStorage).
+ *
+ * Imported after AuthModule: global guards run in module order, so the
  * authenticated user is known when the tracker runs.
  */
 @Module({
   imports: [
     ThrottlerModule.forRootAsync({
-      inject: [ConfigService, Reflector],
-      useFactory: (config: AppConfig, reflector: Reflector) => {
+      imports: [
+        MongooseModule.forFeature([{ name: RateLimitEntity.name, schema: RateLimitSchema }]),
+      ],
+      inject: [ConfigService, Reflector, getModelToken(RateLimitEntity.name)],
+      useFactory: (config: AppConfig, reflector: Reflector, model: Model<RateLimitEntity>) => {
         const isCredentialsRoute = (context: ExecutionContext) =>
           reflector.get<boolean | undefined>(CREDENTIALS_THROTTLE, context.getHandler()) === true;
 
         return {
+          storage: new MongoThrottlerStorage(model),
           throttlers: [
             {
               name: 'default',

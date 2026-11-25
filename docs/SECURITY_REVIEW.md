@@ -11,7 +11,8 @@ independent audit or a penetration test.
 
 ## Findings
 
-Severities of 1–9 are the first reviewer's; 10–13 were found in the later review.
+Severities of 1–9 are the first reviewer's; 10–13 were found in the later review, 14–15 while
+deploying to Vercel.
 
 | #   | Finding                                                   | Severity | Status                                                                         | Verified by                                                    |
 | --- | --------------------------------------------------------- | -------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------- |
@@ -28,6 +29,8 @@ Severities of 1–9 are the first reviewer's; 10–13 were found in the later re
 | 11  | Access token valid up to 15 min after logout or theft     | Medium   | Fixed: session checked on every request                                        | Tests; browser test; live                                      |
 | 12  | Requests hung while MongoDB accepted but did not answer   | Low      | Fixed: 5 s socket timeout, 10 s in total                                       | Live, database paused: 500 in 10 s, then the same cookie works |
 | 13  | Padded emails bypassed the per-account limit (a fix of 7) | Medium   | Fixed: same schema as validation                                               | Test                                                           |
+| 14  | Password-guessing limits multiplied with instances        | Medium   | Fixed: kept in MongoDB                                                         | Tests, two instances; control run; stack, after a restart      |
+| 15  | Token responses did not forbid caching                    | Low      | Fixed: `no-store` on every API response                                        | Test; live                                                     |
 
 nginx also kept proxying to the old address after the API container was replaced (502); found while
 testing the stack, fixed, and confirmed with a container that had changed address. No automated test.
@@ -39,6 +42,11 @@ testing the stack, fixed, and confirmed with a container that had changed addres
   other databases or create users, MongoDB's port is closed, Swagger answers 404, cross-site POSTs
   get 403, and the headers are on HTML and scripts. CI runs it. As a control it was run against the
   stack before these fixes, with one header include removed: 9 checks failed.
+- **Deployment check.** [`scripts/verify-deployment.sh`](../scripts/verify-deployment.sh) probes the
+  live site: closed docs, headers, HTTPS redirect, cross-site POSTs, and that made-up
+  `X-Forwarded-For` addresses do not avoid the limit. Separately, the limiter's stored key matched
+  the client's real address (not a shared proxy's), and the 9 browser scenarios passed on the live
+  site (desktop, slowed to stay under the limit; test accounts deleted). Run by hand, not by CI.
 - **Fault injection.** Faults were put into security-relevant code in a throwaway copy, one at a
   time, and the tests run. On the first version, 45 faults: a first run left 7 undetected (deleted
   user, token audience, CORS, general rate limit, `Secure` flag, password hash selection, logged
@@ -50,8 +58,8 @@ testing the stack, fixed, and confirmed with a container that had changed addres
   mid-refresh, 60 parallel requests while paused, retries, reuse, reuse after the grace period, 8
   concurrent refreshes (one token issued), logout. No password, token or database credential in the
   resulting API logs.
-- **Earlier, on the replaced hasher (same scrypt cost), not repeated:** equal sign-in timing for known and unknown emails (293 ms median each,
-  9 samples, local).
+- **Sign-in timing** was equal for known and unknown emails (293 ms median each, 9 samples, local).
+  Measured on the earlier hasher with the same scrypt cost, and not repeated.
 
 ## Dependencies
 
@@ -76,8 +84,12 @@ testing the stack, fixed, and confirmed with a container that had changed addres
 3. **Grace period.** A stolen refresh token replayed within 30 s is answered, if the owner has not
    used the new one yet; the theft is then detected at the next use. Set the period to 0 for strict
    single use.
-4. **Per-process state.** Rate limits and the grace period are not shared between API instances.
+4. **Per-process state.** The general rate limit and the grace period are not shared between API
+   instances, so on Vercel a retried refresh that reaches another instance ends the session.
    An ambiguous database write (a failure between the server applying the rotation and confirming
    it) can still end a session.
 5. **No TLS in the stack.** See Deployment in the [README](../README.md#deployment).
-6. **Where Web Locks is missing**, tabs that refresh together rely on the grace period alone.
+6. **Vercel demo.** Atlas accepts connections from any address, so the password and TLS are the only
+   barrier. The demo currently uses the Atlas integration's database user, which can read and write
+   every database of the cluster; a user limited to `auth-app` is recommended instead.
+7. **Where Web Locks is missing**, tabs that refresh together rely on the grace period alone.

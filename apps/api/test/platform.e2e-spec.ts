@@ -33,6 +33,17 @@ describe('Platform (e2e)', () => {
     expect(res.body.info.mongodb.status).toBe('up');
   });
 
+  it('forbids storing any response, tokens and errors included', async () => {
+    const signUp = await http()
+      .post('/api/v1/auth/signup')
+      .set('X-Forwarded-For', '203.0.113.60')
+      .send({ email: 'no-store@example.com', name: 'Ada Lovelace', password: 'Analytical1!' })
+      .expect(201);
+    expect(signUp.headers['cache-control']).toBe('no-store');
+    const denied = await http().get('/api/v1/users/me').expect(401);
+    expect(denied.headers['cache-control']).toBe('no-store');
+  });
+
   it('rate-limits credential endpoints per IP', async () => {
     const attempt = () =>
       http()
@@ -63,6 +74,23 @@ describe('Platform (e2e)', () => {
       await attemptFrom(ip).expect(401);
     }
     await attemptFrom('198.51.100.4').expect(429);
+  });
+
+  it('shares the account limit with other instances of the API', async () => {
+    const otherInstance = await createTestApp();
+    try {
+      const attemptOn = (instance: INestApplication, ip: string) =>
+        request(instance.getHttpServer())
+          .post('/api/v1/auth/signin')
+          .set('X-Forwarded-For', ip)
+          .send({ email: 'shared-limit@example.com', password: 'guess-1!' });
+      await attemptOn(app, '198.51.100.11').expect(401);
+      await attemptOn(otherInstance, '198.51.100.12').expect(401);
+      await attemptOn(app, '198.51.100.13').expect(401);
+      await attemptOn(otherInstance, '198.51.100.14').expect(429);
+    } finally {
+      await otherInstance.close();
+    }
   });
 
   it('makes refresh tokens strictly single use when the grace period is 0', async () => {
