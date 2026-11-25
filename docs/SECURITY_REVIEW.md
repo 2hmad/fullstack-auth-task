@@ -89,7 +89,7 @@ testing the stack, fixed, and confirmed with a container that had changed addres
    An ambiguous database write (a failure between the server applying the rotation and confirming
    it) can still end a session.
 5. **No TLS in the stack.** See Deployment in the [README](../README.md#deployment).
-6. **Vercel demo.** Atlas accepts connections from any address, so the password and TLS are the only
-   barrier. The demo currently uses the Atlas integration's database user, which can read and write
-   every database of the cluster; a user limited to `auth-app` is recommended instead.
+6. **Vercel demo.** Atlas accepts connections from any address, because Vercel has no fixed ones, so
+   the password and TLS are the only barrier. The API's database user has `readWrite` on `auth-app`
+   only; other databases and user creation were tried with it and denied.
 7. **Where Web Locks is missing**, tabs that refresh together rely on the grace period alone.
