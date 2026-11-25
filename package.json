@@ -13,7 +13,8 @@
     "dev": "pnpm build:shared && pnpm --parallel --filter @auth-app/api --filter @auth-app/web dev",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm build:shared && pnpm -r typecheck",
-    "test": "pnpm build:shared && pnpm -r test",
+    "test": "pnpm build:shared && pnpm -r --filter '!@auth-app/e2e' test",
+    "test:cov": "pnpm build:shared && pnpm -r --filter '!@auth-app/e2e' test:cov",
     "test:e2e": "pnpm --filter @auth-app/e2e test",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
