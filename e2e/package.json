@@ -1,0 +1,18 @@
+{
+  "name": "@auth-app/e2e",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Browser tests of the full stack: web app + API + MongoDB",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "install-browsers": "playwright install --with-deps chromium",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@types/node": "^24.19.2",
+    "typescript": "^6.0.3"
+  }
+}

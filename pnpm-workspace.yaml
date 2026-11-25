@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - e2e
 
 # pnpm only runs dependency install scripts that are explicitly allowed.
 allowBuilds:
