@@ -1,7 +1,9 @@
 import { LoaderCircle, LogOut } from 'lucide-react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { BrandMark } from '@/components/brand/brand-mark';
 import { Button } from '@/components/ui/button';
+import { FormError } from '@/features/auth/components/form-error';
 import { SIGN_IN_PATH } from '@/features/auth/guards/route-guards';
 import { useSession } from '@/features/auth/use-session';
 
@@ -11,9 +13,17 @@ export function WelcomePage() {
   const { user, signOut, isSigningOut } = useSession();
   const navigate = useNavigate();
 
+  const [signOutError, setSignOutError] = useState<string>();
+
   const handleSignOut = async () => {
-    await signOut().catch(() => undefined); // signed out locally either way
-    navigate(SIGN_IN_PATH, { replace: true });
+    setSignOutError(undefined);
+    try {
+      await signOut();
+      navigate(SIGN_IN_PATH, { replace: true });
+    } catch {
+      // The session is still alive on the server: say so instead of pretending.
+      setSignOutError('Could not sign you out. Check your connection and try again.');
+    }
   };
 
   return (
@@ -38,6 +48,11 @@ export function WelcomePage() {
       </header>
 
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-16 sm:px-8 sm:py-24">
+        {signOutError && (
+          <div className="mb-10 max-w-xl">
+            <FormError message={signOutError} />
+          </div>
+        )}
         <h1 className="max-w-[14ch] text-[clamp(2.75rem,7vw,5.5rem)] leading-[0.98] font-extrabold tracking-[-0.035em]">
           Welcome to the application.
         </h1>

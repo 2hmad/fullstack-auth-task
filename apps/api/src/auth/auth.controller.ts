@@ -1,5 +1,15 @@
-import { Body, Controller, HttpCode, HttpStatus, Inject, Post, Req, Res } from '@nestjs/common';
-import { Public } from '@nestjs/authentication';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Post,
+  Req,
+  Res,
+} from '@nestjs/common';
+import { AuthenticationError, Public } from '@nestjs/authentication';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
   accessTokenSchema,
@@ -24,6 +34,13 @@ import {
 } from './refresh-token.cookie.js';
 
 export const REFRESH_COOKIE_SETTINGS = Symbol('REFRESH_COOKIE_SETTINGS');
+
+function isUnauthorized(error: unknown): boolean {
+  return (
+    (error instanceof AuthenticationError && error.status === HttpStatus.UNAUTHORIZED) ||
+    (error instanceof HttpException && error.getStatus() === HttpStatus.UNAUTHORIZED)
+  );
+}
 
 const errorResponse = (status: number, description: string) =>
   ApiResponse({ status, description, standardSchema: apiErrorSchema });
@@ -98,7 +115,9 @@ export class AuthController {
       setRefreshCookie(res, refreshToken, this.cookie);
       return { accessToken, expiresIn };
     } catch (error) {
-      clearRefreshCookie(res, this.cookie); // a dead cookie is useless: stop the browser sending it
+      // A dead token is useless: stop the browser sending it. A temporary failure (database
+      // blip, 5xx) must not end a valid session, so the cookie stays.
+      if (isUnauthorized(error)) clearRefreshCookie(res, this.cookie);
       throw error;
     }
   }

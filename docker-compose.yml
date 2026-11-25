@@ -4,7 +4,9 @@ services:
     image: mongo:8
     restart: unless-stopped
     ports:
-      - '27017:27017' # exposed for local development and e2e tests
+      # Local development and e2e tests only: bound to this machine, never the network.
+      # A shared or internet-facing deployment should also enable MongoDB authentication.
+      - '127.0.0.1:27017:27017'
     volumes:
       - mongo-data:/data/db
     healthcheck:
@@ -29,6 +31,8 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       TRUST_PROXY_HOPS: 1 # nginx
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Swagger UI at /api/docs. Off by default when NODE_ENV=production; on here for reviewers.
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-true}
       # Sign-in/sign-up attempts per IP per minute. Raise it only to run e2e tests against this stack.
       AUTH_THROTTLE_LIMIT: ${AUTH_THROTTLE_LIMIT:-5}
 

@@ -33,8 +33,10 @@ describe('validateEnv', () => {
     expect(env.SWAGGER_ENABLED).toBe(false);
   });
 
-  it('defaults to secure cookies in production', () => {
-    expect(validateEnv({ ...base, NODE_ENV: 'production' }).COOKIE_SECURE).toBe(true);
+  it('defaults to secure cookies and no API docs in production', () => {
+    const env = validateEnv({ ...base, NODE_ENV: 'production' });
+    expect(env.COOKIE_SECURE).toBe(true);
+    expect(env.SWAGGER_ENABLED).toBe(false);
   });
 
   it('refuses to start without a MongoDB URI', () => {

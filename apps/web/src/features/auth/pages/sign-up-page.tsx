@@ -2,7 +2,7 @@ import { signUpSchema, type SignUpInput, type SignUpPayload } from '@auth-app/sh
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
-import { Link, useNavigate } from 'react-router';
+import { Link } from 'react-router';
 import { Input } from '@/components/ui/input';
 import { ApiError } from '@/lib/api/api-error';
 import { AuthLayout } from '../components/auth-layout';
@@ -11,13 +11,12 @@ import { FormField } from '../components/form-field';
 import { PasswordInput } from '../components/password-input';
 import { PasswordRules } from '../components/password-rules';
 import { SubmitButton } from '../components/submit-button';
-import { APP_PATH, SIGN_IN_PATH } from '../guards/route-guards';
+import { SIGN_IN_PATH } from '../guards/route-guards';
 import { describeAuthError } from '../server-errors';
 import { useSession } from '../use-session';
 
 export function SignUpPage() {
   const { signUp } = useSession();
-  const navigate = useNavigate();
   const [formError, setFormError] = useState<string>();
 
   const form = useForm<SignUpInput, unknown, SignUpPayload>({
@@ -31,8 +30,8 @@ export function SignUpPage() {
   const onSubmit = form.handleSubmit(async (values) => {
     setFormError(undefined);
     try {
+      // On success the route guard takes over and redirects to the application.
       await signUp(values);
-      navigate(APP_PATH, { replace: true });
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         form.setError('email', { message: error.messages[0] }, { shouldFocus: true });

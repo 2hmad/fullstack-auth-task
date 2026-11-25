@@ -32,8 +32,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const signUp = useMutation({ mutationFn: authApi.signUp, onSuccess: setUser });
   const signOut = useMutation({
     mutationFn: authApi.signOut,
-    // Signed out locally even if the network call failed: the access token is already gone.
-    onSettled: () => {
+    onSuccess: () => {
       queryClient.removeQueries({
         predicate: (query) => query.queryKey[0] !== SESSION_QUERY_KEY[0],
       });

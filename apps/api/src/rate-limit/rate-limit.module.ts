@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { emailSchema } from '@auth-app/shared';
+import { Module, type ExecutionContext } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_GUARD, Reflector } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -8,10 +9,27 @@ import type { User } from '../users/user.model.js';
 import { CREDENTIALS_THROTTLE } from './credentials-throttle.decorator.js';
 
 const ONE_MINUTE_MS = 60_000;
+const FIFTEEN_MINUTES_MS = 15 * ONE_MINUTE_MS;
 
 /**
- * Two budgets per minute: a general one for every route (per user when signed in, per IP
- * otherwise) and a strict per-IP one for routes marked @CredentialsThrottle().
+ * The email of a sign-in/sign-up body, normalised by the schema that validates the request, so
+ * every spelling that could reach a credential check counts against the same account. Anything
+ * the schema rejects is answered with 400 before any password is checked.
+ */
+function submittedEmail(context: ExecutionContext): string | null {
+  const body: unknown = context.switchToHttp().getRequest<Request>().body;
+  const email =
+    body && typeof body === 'object' ? (body as Record<string, unknown>).email : undefined;
+  return emailSchema.safeParse(email).data ?? null;
+}
+
+/**
+ * Three budgets:
+ * - default: every route, per user when signed in, per IP otherwise;
+ * - credentials: routes marked @CredentialsThrottle(), per IP (password guessing from one host);
+ * - account: the same routes, per submitted email (guessing one account from many hosts).
+ *   Trade-off: someone can exhaust another person's budget for 15 minutes. The limit is
+ *   generous enough that a real user rarely notices, and it stops distributed guessing.
  *
  * Imported after AuthenticationModule: global guards run in module order, so the
  * authenticated user is known when the tracker runs.
@@ -20,26 +38,37 @@ const ONE_MINUTE_MS = 60_000;
   imports: [
     ThrottlerModule.forRootAsync({
       inject: [ConfigService, Reflector],
-      useFactory: (config: AppConfig, reflector: Reflector) => ({
-        throttlers: [
-          {
-            name: 'default',
-            ttl: ONE_MINUTE_MS,
-            limit: config.get('THROTTLE_LIMIT', { infer: true }),
+      useFactory: (config: AppConfig, reflector: Reflector) => {
+        const isCredentialsRoute = (context: ExecutionContext) =>
+          reflector.get<boolean | undefined>(CREDENTIALS_THROTTLE, context.getHandler()) === true;
+
+        return {
+          throttlers: [
+            {
+              name: 'default',
+              ttl: ONE_MINUTE_MS,
+              limit: config.get('THROTTLE_LIMIT', { infer: true }),
+            },
+            {
+              name: 'credentials',
+              ttl: ONE_MINUTE_MS,
+              limit: config.get('AUTH_THROTTLE_LIMIT', { infer: true }),
+              skipIf: (context) => !isCredentialsRoute(context),
+            },
+            {
+              name: 'account',
+              ttl: FIFTEEN_MINUTES_MS,
+              limit: config.get('ACCOUNT_THROTTLE_LIMIT', { infer: true }),
+              skipIf: (context) => !isCredentialsRoute(context) || !submittedEmail(context),
+              getTracker: (_req, context) => `account:${submittedEmail(context)}`,
+            },
+          ],
+          getTracker: (req) => {
+            const { user, ip } = req as Request & { user?: User | null };
+            return user ? `user:${user.id}` : `ip:${ip}`;
           },
-          {
-            name: 'credentials',
-            ttl: ONE_MINUTE_MS,
-            limit: config.get('AUTH_THROTTLE_LIMIT', { infer: true }),
-            skipIf: (context) =>
-              !reflector.get<boolean>(CREDENTIALS_THROTTLE, context.getHandler()),
-          },
-        ],
-        getTracker: (req) => {
-          const { user, ip } = req as Request & { user?: User | null };
-          return user ? `user:${user.id}` : `ip:${ip}`;
-        },
-      }),
+        };
+      },
     }),
   ],
   providers: [

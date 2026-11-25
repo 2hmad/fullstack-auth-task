@@ -44,11 +44,13 @@ export const authApi = {
     return token ? authApi.me() : null;
   },
 
+  /**
+   * Revokes the session on the server, then forgets the access token. If the request fails the
+   * session is still alive server-side, so the error propagates and the user stays signed in
+   * rather than being told they are signed out when they are not.
+   */
   async signOut(): Promise<void> {
-    try {
-      await apiRequest('/auth/logout', { method: 'POST', authenticated: false });
-    } finally {
-      accessTokenStore.clear();
-    }
+    await apiRequest('/auth/logout', { method: 'POST', authenticated: false });
+    accessTokenStore.clear();
   },
 };

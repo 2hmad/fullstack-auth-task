@@ -37,11 +37,15 @@ const envSchema = z
     /** Number of reverse proxies in front of the API, so client IPs (rate limiting, logs) are right. */
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
     THROTTLE_LIMIT: z.coerce.number().int().positive().default(100),
+    /** Sign-in/sign-up attempts per IP per minute. */
     AUTH_THROTTLE_LIMIT: z.coerce.number().int().positive().default(5),
+    /** Sign-in attempts per account per 15 minutes, whatever IPs they come from. */
+    ACCOUNT_THROTTLE_LIMIT: z.coerce.number().int().positive().default(10),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
-    SWAGGER_ENABLED: booleanFlag.default(true),
+    /** API docs at /api/docs. Defaults to on outside production. */
+    SWAGGER_ENABLED: booleanFlag.optional(),
   })
   .refine((env) => env.REFRESH_TOKEN_ABSOLUTE_TTL_SECONDS >= env.REFRESH_TOKEN_TTL_SECONDS, {
     path: ['REFRESH_TOKEN_ABSOLUTE_TTL_SECONDS'],
@@ -50,6 +54,7 @@ const envSchema = z
   .transform((env) => ({
     ...env,
     COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === 'production',
+    SWAGGER_ENABLED: env.SWAGGER_ENABLED ?? env.NODE_ENV !== 'production',
   }));
 
 export type Env = z.output<typeof envSchema>;

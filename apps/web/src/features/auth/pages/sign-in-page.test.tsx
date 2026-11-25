@@ -32,6 +32,27 @@ describe('Sign in', () => {
     expect(fakeApi.hasRefreshCookie).toBe(false);
   });
 
+  it('keeps people signed in, and says so, when signing out fails', async () => {
+    const { user } = renderApp('/signin');
+    await fillAndSubmit(user, 'ada@example.com', 'Analytical1!');
+    await screen.findByRole('heading', { name: 'Welcome to the application.' });
+
+    server.use(http.post('*/api/v1/auth/logout', () => HttpResponse.error()));
+    await user.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not sign you out');
+    expect(
+      screen.getByRole('heading', { name: 'Welcome to the application.' }),
+    ).toBeInTheDocument();
+  });
+
+  it('returns to the page that required sign-in', async () => {
+    const { user, router } = renderApp('/app');
+    await fillAndSubmit(user, 'ada@example.com', 'Analytical1!');
+    await screen.findByRole('heading', { name: 'Welcome to the application.' });
+    expect(router.state.location.pathname).toBe('/app');
+  });
+
   it('explains a failed sign-in without saying which part was wrong', async () => {
     const { user } = renderApp('/signin');
     await fillAndSubmit(user, 'ada@example.com', 'wrong-password');

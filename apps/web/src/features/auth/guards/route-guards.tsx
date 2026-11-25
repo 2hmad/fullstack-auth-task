@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from 'react-router';
 import { useSession } from '../use-session';
 import { FullPageSpinner } from '@/components/full-page-spinner';
+import { safeReturnPath } from './return-path';
 
 export const SIGN_IN_PATH = '/signin';
 export const APP_PATH = '/app';
@@ -16,10 +17,16 @@ export function RequireAuth() {
   return <Outlet />;
 }
 
-/** Sign-in and sign-up make no sense when already signed in. */
+/**
+ * Sign-in and sign-up make no sense when already signed in: go to the page that asked for
+ * sign-in, or to the application. This also performs the redirect right after signing in.
+ */
 export function RedirectIfAuthenticated() {
   const { status } = useSession();
+  const location = useLocation();
   if (status === 'loading') return <FullPageSpinner />;
-  if (status === 'authenticated') return <Navigate to={APP_PATH} replace />;
+  if (status === 'authenticated') {
+    return <Navigate to={safeReturnPath(location.state) ?? APP_PATH} replace />;
+  }
   return <Outlet />;
 }

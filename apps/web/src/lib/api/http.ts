@@ -43,6 +43,7 @@ let inFlightRefresh: Promise<string | null> | null = null;
  */
 export function refreshAccessToken(): Promise<string | null> {
   inFlightRefresh ??= withRefreshLock(async () => {
+    const startedAt = accessTokenStore.generation();
     const response = await send(REFRESH_PATH, { method: 'POST' });
     if (!response.ok) {
       accessTokenStore.clear();
@@ -50,6 +51,8 @@ export function refreshAccessToken(): Promise<string | null> {
       throw await ApiError.fromResponse(response);
     }
     const { accessToken } = accessTokenSchema.parse(await response.json());
+    // Signed out while this was in flight: the new token must not revive the session.
+    if (accessTokenStore.generation() !== startedAt) return null;
     accessTokenStore.set(accessToken);
     return accessToken;
   }).finally(() => {

@@ -1,7 +1,8 @@
 # Architecture decisions
 
-Decisions were taken **before** writing code, then revised once where the tooling turned out to be
-newer than planned (marked _Revised_). Each entry: what we chose, why, and what we gave up.
+The main decisions were proposed and approved **before** implementation. Entries marked _Revised_
+were changed during the build, when the tooling turned out to be newer than planned. Each entry:
+what we chose, why, and what we gave up.
 
 ---
 
@@ -48,6 +49,12 @@ instead of fighting the framework back to CommonJS + Jest.
   Presenting an already-used token means it was stolen: the whole token family is revoked
   (OAuth 2.0 Security BCP §4.14.2). Logout revokes the family.
 - On page reload the web app calls `POST /auth/refresh` once to restore the session.
+- A refresh that fails with 401 clears the cookie; an error response (5xx) keeps it, so the
+  session survives once the API recovers. Known gap: if the server rotates the token but the
+  response is lost (timeout, dropped connection), the browser still holds a spent token and the
+  next refresh ends the session. Access tokens are stateless, so they stay valid for up to 15
+  minutes after logout. A failed logout keeps the user signed in and says so,
+  because the session is still alive on the server.
 - **Rejected:** token in `localStorage` (any XSS steals it); one long-lived JWT in a cookie (no
   revocation, no rotation).
 
@@ -58,8 +65,8 @@ already provides, tested: a global guard with `@Public()`, `@CurrentUser()`, tim
 verification (`PasswordHasher`, scrypt), and `TokenService` with rotating refresh tokens and reuse
 detection.
 
-- **Why:** less custom security code = fewer places to get crypto wrong. Our own code is limited
-  to the MongoDB refresh-token store, which we verify against the package's official
+- **Why:** less custom security code = fewer places to get crypto wrong. The main
+  custom storage code is the MongoDB refresh-token store, which we verify against the package's official
   `authenticationStoreContract()` suite (including the concurrency cases).
 - **Risk:** the package is 0.x. We pin the exact version (`0.1.7`) and the contract suite catches
   behaviour changes on upgrade.
@@ -76,7 +83,12 @@ Protected endpoint: `GET /api/v1/users/me`.
 
 - `helmet` security headers; CORS limited to the configured web origin.
 - `app.enableCsrfProtection()` (Nest 12, Fetch-Metadata based) on top of `SameSite=Strict`.
-- Rate limiting with `@nestjs/throttler`: 100 req/min globally, 5 req/min per IP on sign-up/sign-in.
+- Rate limiting with `@nestjs/throttler`, three budgets: 100 req/min globally (per user or IP);
+  5 sign-in/sign-up attempts per minute per IP; 10 per 15 minutes per submitted email, which
+  slows guessing one account from many IPs. The email is normalised by the same schema that
+  validates the request, so padding or letter case cannot dodge the budget. Trade-offs: anyone
+  can use up another person's budget for 15 minutes, successful sign-ins count too, and counts
+  are kept in memory per API instance.
 - **No user enumeration on sign-in:** unknown email and wrong password get the same 401 body, and
   `PasswordHasher.verify()` checks a dummy hash when the user does not exist so timing matches.
 - **Sign-up with a taken email returns 409.** This does reveal that an address is registered;
@@ -99,7 +111,8 @@ Protected endpoint: `GET /api/v1/users/me`.
 - Successful responses return the resource itself. **Every error** has one shape:
   `{ statusCode, error, message, path, timestamp, requestId }`, produced by a global exception
   filter. Unexpected errors are logged with their stack and answered with a generic 500.
-- OpenAPI (Swagger UI) at `/api/docs`, generated from the same Zod schemas.
+- OpenAPI (Swagger UI) at `/api/docs`, generated from the same Zod schemas. Off by default when
+  `NODE_ENV=production` (it maps the attack surface); the compose stack turns it on for reviewers.
 
 ## 10. Logging
 
@@ -134,5 +147,9 @@ response), and `authorization`, `cookie`, `set-cookie` and `password` redacted.
 
 - GitHub Actions: lint, type-check, test and build every package; then Playwright against the
   built stack.
-- `docker compose up` runs MongoDB, the API and nginx serving the web app.
-- Conventional commits, small and in order, so the history shows how the work progressed.
+- `docker compose up` runs MongoDB, the API and nginx serving the web app. nginx sends the CSP
+  and other security headers from one include file in every location (nginx drops server-level
+  `add_header`s in any location that sets its own). MongoDB's port is bound to 127.0.0.1 only;
+  MongoDB authentication is not enabled, so this stack is for local use.
+- Conventional commits grouped by topic. The order is logical rather than a timeline: later
+  corrections were folded into the commits they belong to.

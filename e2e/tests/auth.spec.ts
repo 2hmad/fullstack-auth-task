@@ -104,3 +104,20 @@ test('screenshots of every screen', async ({ page }, testInfo) => {
   await expect(welcome(page)).toBeVisible();
   await shot('app');
 });
+
+test('two tabs restoring the session together do not sign each other out', async ({
+  page,
+  context,
+}) => {
+  await signUp(page, newAccount());
+  await expect(welcome(page)).toBeVisible();
+
+  // Both tabs spend the same single-use refresh cookie on load: without cross-tab locking,
+  // the second use looks like token theft and revokes the session.
+  const second = await context.newPage();
+  for (let round = 0; round < 5; round += 1) {
+    await Promise.all([page.goto('/app'), second.goto('/app')]);
+    await expect(welcome(page)).toBeVisible();
+    await expect(welcome(second)).toBeVisible();
+  }
+});

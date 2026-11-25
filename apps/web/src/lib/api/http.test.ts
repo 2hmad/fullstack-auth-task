@@ -4,7 +4,7 @@ import { fakeApi } from '@/test/fake-api';
 import { server } from '@/test/setup';
 import { accessTokenStore } from './access-token';
 import { ApiError } from './api-error';
-import { apiRequest, onSessionExpired } from './http';
+import { apiRequest, onSessionExpired, refreshAccessToken } from './http';
 
 describe('apiRequest', () => {
   beforeEach(() => {
@@ -24,6 +24,22 @@ describe('apiRequest', () => {
     accessTokenStore.set('expired-token');
     await Promise.all([1, 2, 3].map(() => apiRequest('/users/me', { schema: userProfileSchema })));
     expect(fakeApi.refreshCalls).toBe(1);
+  });
+
+  it('drops a refresh that finishes after sign-out', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    server.use(
+      http.post('*/api/v1/auth/refresh', async () => {
+        await gate;
+        return HttpResponse.json({ accessToken: 'late-token', expiresIn: 900 });
+      }),
+    );
+    const pending = refreshAccessToken();
+    accessTokenStore.clear(); // the user signs out meanwhile
+    release();
+    expect(await pending).toBeNull();
+    expect(accessTokenStore.get()).toBeNull();
   });
 
   it('reports an expired session when the refresh fails too', async () => {
